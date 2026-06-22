@@ -1,0 +1,133 @@
+version: '3.8'
+
+services:
+  # MySQL 数据库
+  mysql:
+    image: mysql:8.0
+    container_name: incident-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: incident_db
+      MYSQL_USER: incident
+      MYSQL_PASSWORD: incident123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./docker/init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - incident-network
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: incident-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - incident-network
+
+  # Prometheus (指标存储)
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: incident-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - incident-network
+
+  # Grafana (指标可视化)
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: incident-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - incident-network
+
+  # Loki (日志存储)
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: incident-loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - incident-network
+
+  # Elasticsearch (备选日志存储,用于Runbook RAG)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: incident-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - incident-network
+
+  # RocketMQ (可选,用于消息积压故障)
+  namesrv:
+    image: apache/rocketmq:5.1.4
+    container_name: incident-rocketmq-namesrv
+    ports:
+      - "9876:9876"
+    command: sh mqnamesrv
+    networks:
+      - incident-network
+
+  broker:
+    image: apache/rocketmq:5.1.4
+    container_name: incident-rocketmq-broker
+    ports:
+      - "10909:10909"
+      - "10911:10911"
+    environment:
+      - NAMESRV_ADDR=namesrv:9876
+    command: sh mqbroker -n namesrv:9876
+    depends_on:
+      - namesrv
+    networks:
+      - incident-network
+
+volumes:
+  mysql-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  elasticsearch-data:
+
+networks:
+  incident-network:
+    driver: bridge

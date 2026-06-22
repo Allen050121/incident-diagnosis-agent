@@ -1,0 +1,8 @@
+{
+  "templateVersion": "0.6.5",
+  "schemaVersion": 1,
+  "updatedAt": "2026-06-05",
+  "notes": [
+    "Makes Claude startup context explicitly request visible .ai-team status on first replies."
+  ]
+}

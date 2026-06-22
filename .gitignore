@@ -1,0 +1,68 @@
+# Java
+**/target/
+*.jar
+*.war
+*.class
+.mvn/
+mvnw
+mvnw.cmd
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE
+.idea/
+!.idea/runConfigurations/
+.vscode/
+*.swp
+*.swo
+*~
+*.iml
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+/dist/
+/build/
+
+# Environment (敏感信息)
+.env
+.env.local
+.env.*.local
+
+# AI Team State (本地状态,不上传)
+.ai-team/state/collaboration.json
+.ai-team/state/runs.json
+.ai-team/tasks/*.md
+!.ai-team/tasks/TEMPLATE.md
+
+# 配置文件模板(上传模版,实际配置不上传)
+!docker/prometheus/prometheus.yml.example
+python/app/config.py.example
+java/*/src/main/resources/application.yml.example
+
+# API Keys & Secrets
+**/*secret*
+**/*credentials*
+**/.aws/
+**/.gcp/
+

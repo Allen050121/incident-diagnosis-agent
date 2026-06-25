@@ -525,6 +525,32 @@ load_incident
 
 达到边界后输出 `INCONCLUSIVE`，不能强行给出根因。
 
+### 7.4 四类 Agent 能力验收
+
+#### 任务拆解
+
+- 调查计划最多 2-4 个初始步骤。
+- 根据新证据最多增加有限验证步骤。
+- 不使用多 Agent，除非后续评测证明并行专家能显著提升复杂故障诊断。
+
+#### 工具调用
+
+- 所有工具使用结构化参数和白名单查询模板。
+- 工具失败可区分超时、无数据、权限和服务不可用。
+- 工具结果带证据 ID、查询时间窗、截断标记和来源。
+
+#### 评测与可观测
+
+- 调查流程、工具调用、证据和状态转移可回放。
+- 回放默认使用保存的工具结果，不重新查询已经变化的观测数据。
+- 保存结构化假设与证据，不暴露模型隐藏 Chain-of-Thought。
+
+#### 生产能力
+
+- 支持 Worker 崩溃、工具部分不可用、用户取消和预算耗尽。
+- Checkpoint 恢复后对证据 ID 去重。
+- 证据不足时输出 `INCONCLUSIVE`，稳定性优先于强行回答。
+
 ## 8. Java 与 Python 通信
 
 ### 8.1 Redis Streams
@@ -632,6 +658,95 @@ Runbook 文档应围绕具体故障：
 
 检索结果是参考资料，不是事实证据。最终根因必须由当前 Incident 的日志、指标或变更记录支持。
 
+#### 为什么这里需要 RAG
+
+Runbook 和历史故障案例适合 RAG，因为：
+
+- 文档数量会增加，内容会随架构和中间件版本变化。
+- 告警描述与排障手册标题往往不是同一种表达。
+- Agent 需要从文档中找到“下一步该查什么”，而不是背诵所有排障知识。
+- 报告需要引用具体排障依据。
+
+以下内容不进入 RAG：
+
+- 当前事故的实时日志和指标，它们通过工具按时间窗口查询。
+- 服务拓扑、部署版本等结构化数据，它们通过 API 获取。
+- 当前根因结论，它必须由本次事故证据推导。
+
+尤其不能把全部生产日志向量化后当作主要诊断方式：
+
+- 日志更新快、数据量大、重复度高。
+- 精确 Trace ID、错误码和时间窗口更适合关键词/结构化查询。
+- 向量召回可能返回语义相似但时间不相关的历史日志。
+- 敏感数据治理和索引成本更高。
+
+#### 检索引擎选型
+
+MVP 首选 **Elasticsearch**：
+
+- Runbook 需要 BM25 精确匹配错误码、异常类名和组件名称。
+- 已经承载或可同时承载日志搜索。
+- 支持服务名、组件、版本、生效时间等过滤。
+- 后续可在同一引擎中增加 dense vector 和 RRF Hybrid Search。
+
+Qdrant 的向量与混合检索能力很好，但当前 Runbook 数量小，且日志精确检索是核心需求，额外引入 Qdrant 会增加部署和数据同步成本。Milvus 更不适合此数据规模。若未来 Runbook 成为独立大规模知识服务，再根据压测和召回数据重新选型。
+
+#### 检索与评测流程
+
+```text
+告警类型 + 异常类名 + 服务/组件
+  -> 查询改写
+  -> 组件、版本和生效时间过滤
+  -> BM25 基线
+  -> 可选 dense vector
+  -> RRF 融合
+  -> 可选 Rerank
+  -> Top-K Runbook
+```
+
+人工为每个故障案例标注：
+
+- 相关 Runbook ID。
+- 相关章节。
+- 不适用但容易误召回的文档。
+
+计算：
+
+- Recall@K。
+- Precision@K。
+- MRR。
+- nDCG@K。
+- No-hit Accuracy。
+
+相似度分数只用于排序，不能被解释为“根因概率”。Runbook 召回正确也不代表根因正确，只说明 Agent 获得了合适的调查参考。
+
+#### 知识时效与版本
+
+Runbook 元数据：
+
+```text
+runbook_id
+service
+component
+applicable_version
+effective_from
+effective_to
+owner
+source_commit
+content_hash
+last_verified_at
+status
+```
+
+治理规则：
+
+- 服务或中间件升级后，相关 Runbook 自动标记待验证。
+- 文档源 Commit 或内容哈希变化后生成新版本。
+- 旧版本保留用于历史事故审计，但运行时默认过滤。
+- 超过验证时限的文档降低排序或禁止作为高置信度依据。
+- 文档更新后自动运行受影响故障案例的检索回归。
+- Embedding 模型升级时创建新索引重建，验证完成后原子切换别名。
+
 ### 9.4 上下文预算
 
 为不同类型数据设置预算：
@@ -641,6 +756,53 @@ Runbook 文档应围绕具体故障：
 - 指标：最大 N 个关键指标。
 - Runbook：Top-K。
 - 历史步骤：保留结构化摘要。
+
+### 9.5 Agent 记忆设计
+
+#### 事故内短期工作记忆
+
+通过 LangGraph Checkpointer 按 `incident_id/thread_id` 保存：
+
+- 告警解析结果。
+- 调查计划。
+- 已收集证据 ID。
+- 已验证和被否定的假设。
+- 工具失败。
+- 当前预算和节点位置。
+
+它用于中断恢复和避免重复查询。大段日志不直接放入 Checkpoint，只保存：
+
+- 查询条件。
+- 聚合摘要。
+- 代表日志引用。
+- 原始数据存储位置。
+
+#### 业务任务状态
+
+MySQL 保存 Incident、DiagnosisTask 和 DiagnosisReport。它是业务事实，不属于模型记忆。Checkpoint 丢失时，系统仍能判断任务是否已经完成或取消。
+
+#### 跨事故长期记忆
+
+MVP 不让 Agent 自动把自己的结论写成长期事实，避免错误诊断污染后续事故。
+
+只有经过人工确认或确定性标签验证的案例才能进入“已验证历史案例库”，并记录：
+
+- 原始 Incident。
+- 最终确认根因。
+- 有效证据。
+- 适用服务与版本。
+- 验证人和验证时间。
+- 过期条件。
+
+这类记忆本质上是经过治理的案例知识，可进入 RAG；未经确认的 Agent 推测只能留在当前任务 Trace。
+
+#### 程序性记忆
+
+工具定义、调查策略和安全限制保存在版本化代码、Prompt 和配置中，不让 Agent 在线修改自己的核心策略。后续若根据失败案例优化流程，应通过代码评审和回归测试发布。
+
+设计原则：
+
+> 短期记忆保存当前调查进度；长期记忆只保存被验证的跨事故经验；实时日志和指标按需查询；模型推测永远不能自动升级为组织知识。
 
 ## 10. 故障处理与可靠性
 
@@ -731,6 +893,15 @@ Runbook 文档应围绕具体故障：
 - 平均工具调用次数。
 - p50/p95 诊断耗时。
 - 单任务 Token 与成本。
+
+指标分层：
+
+- RAG 层：Runbook Recall@K、Precision@K、MRR、nDCG、No-hit Accuracy。
+- 工具层：工具选择、参数正确率、证据查询成功率。
+- Agent 层：Top-1/Top-3、无依据结论率、合理拒答率。
+- 系统层：排队时间、p95 延迟、恢复成功率、单任务成本。
+
+Runbook Recall@K 与 Root Cause Top-K 必须分开报告，二者不是同一个指标。
 
 ### 12.3 指标定义注意
 
@@ -838,6 +1009,7 @@ incident_id
 - 根因、症状、证据定义。
 - 15 条种子测试。
 - 评测指标。
+- Runbook 相关性标注和知识版本规范。
 
 退出条件：
 
@@ -895,10 +1067,13 @@ incident_id
 - 证据 ID。
 - 支持证据和反证。
 - 无证据结论校验。
+- BM25、Hybrid Search 的 Recall@K/MRR 对照。
+- Runbook 版本、失效、待验证和索引切换。
 
 退出条件：
 
 - 最终报告中的每条关键结论都可追溯。
+- 过期或版本不适用的 Runbook 不会成为有效依据。
 
 ### 阶段 5：异步任务与恢复
 
@@ -1005,17 +1180,20 @@ incident_id
 - 根据失败案例优化调查策略。
 - 对高置信度、低风险建议增加人工确认后的半自动处置。
 - 对 Agent 诊断结果进行线上反馈闭环。
+- 只将人工确认的事故结论沉淀为长期案例记忆。
 - 使用 OpenTelemetry GenAI 语义规范统一模型和工具 Span。
 
 ## 20. 参考资料
 
 - [LangGraph Overview](https://docs.langchain.com/oss/python/langgraph/overview)
 - [LangGraph Durable Persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
+- [LangGraph Memory Overview](https://docs.langchain.com/oss/python/concepts/memory)
 - [Redis Streams](https://redis.io/docs/latest/develop/data-types/streams/)
+- [Elasticsearch Hybrid Search](https://www.elastic.co/docs/solutions/search/hybrid-search)
+- [Elasticsearch Reciprocal Rank Fusion](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/reciprocal-rank-fusion)
 - [OpenTelemetry AI Agent Observability](https://opentelemetry.io/blog/2025/ai-agent-observability/)
 - [OWASP Agentic AI Threats and Mitigations](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/)
 - [Exploring LLM-based Agents for Root Cause Analysis](https://arxiv.org/html/2403.04123v1)
 - [Awesome LLM AIOps](https://github.com/Jun-jie-Huang/awesome-LLM-AIOps)
 - [Aurora](https://github.com/Arvo-AI/aurora)
 - [SRE-agent](https://github.com/martinimarcello00/SRE-agent)
-

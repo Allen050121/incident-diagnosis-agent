@@ -1,20 +1,20 @@
 server:
-  port: 8081
+  port: 9081
 
 spring:
   application:
     name: order-service
   datasource:
-    url: jdbc:mysql://localhost:3306/incident_db?useSSL=false&serverTimezone=UTC
-    username: incident
-    password: incident123
+    url: jdbc:mysql://192.168.85.66:3306/incident_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: root
+    password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
       ddl-auto: update
   data:
     redis:
-      host: localhost
+      host: 192.168.85.66
       port: 6379
 
 management:

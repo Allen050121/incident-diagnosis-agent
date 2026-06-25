@@ -1,12 +1,12 @@
 server:
-  port: 8083
+  port: 9083
 
 spring:
   application:
     name: payment-mock-service
   data:
     redis:
-      host: localhost
+      host: 192.168.85.66
       port: 6379
 
 management:

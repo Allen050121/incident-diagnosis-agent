@@ -1,0 +1,207 @@
+# Fault Scenario Definitions
+# 12 fault templates for MVP
+
+faults:
+  # 1. MySQL 慢 SQL
+  mysql-slow-query-001:
+    category: DATABASE
+    root_cause: MISSING_INDEX
+    affected_service: order-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        delay_ms: 1800
+    expected_signals:
+      logs:
+        - "query execution exceeded threshold"
+      metrics:
+        - "db_query_p95 > 1500ms"
+    forbidden_conclusions:
+      - REDIS_TIMEOUT
+
+  # 2. MySQL 连接池耗尽
+  mysql-connection-pool-exhausted-001:
+    category: DATABASE
+    root_cause: CONNECTION_POOL_EXHAUSTED
+    affected_service: order-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        exception_type: TIMEOUT
+    expected_signals:
+      logs:
+        - "Cannot acquire connection from connection pool"
+      metrics:
+        - "db_pool_active_ratio > 0.95"
+    forbidden_conclusions:
+      - REDIS_TIMEOUT
+
+  # 3. Redis 请求超时
+  redis-timeout-001:
+    category: CACHE
+    root_cause: REDIS_TIMEOUT
+    affected_service: order-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        delay_ms: 2000
+    expected_signals:
+      logs:
+        - "Redis connection timeout"
+      metrics:
+        - "redis_p95 > 1500ms"
+    forbidden_conclusions:
+      - DATABASE_LATENCY
+
+  # 4. Redis 热 Key
+  redis-hot-key-001:
+    category: CACHE
+    root_cause: REDIS_HOT_KEY
+    affected_service: inventory-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        delay_ms: 500
+    expected_signals:
+      logs:
+        - "Redis operation slow"
+      metrics:
+        - "redis_p95 > 400ms"
+    forbidden_conclusions:
+      - DATABASE_LATENCY
+
+  # 5. 下游支付接口超时
+  downstream-payment-timeout-001:
+    category: DOWNSTREAM
+    root_cause: DOWNSTREAM_TIMEOUT
+    affected_service: payment-mock-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        delay_ms: 3000
+    expected_signals:
+      logs:
+        - "Payment service timeout"
+      metrics:
+        - "downstream_payment_p95 > 2500ms"
+    forbidden_conclusions:
+      - DATABASE_LATENCY
+
+  # 6. 下游支付接口 5xx
+  downstream-payment-5xx-001:
+    category: DOWNSTREAM
+    root_cause: DOWNSTREAM_ERROR
+    affected_service: payment-mock-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        exception_type: SERVICE_UNAVAILABLE
+    expected_signals:
+      logs:
+        - "Payment service returned 503"
+      metrics:
+        - "downstream_payment_error_rate > 0.5"
+    forbidden_conclusions:
+      - DATABASE_LATENCY
+
+  # 7. HTTP 连接池耗尽
+  http-connection-pool-exhausted-001:
+    category: RESOURCE
+    root_cause: HTTP_CONNECTION_POOL_EXHAUSTED
+    affected_service: payment-mock-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        exception_type: CONNECTION_REFUSED
+    expected_signals:
+      logs:
+        - "Connection pool exhausted"
+      metrics:
+        - "http_pool_active_ratio > 0.95"
+    forbidden_conclusions:
+      - REDIS_TIMEOUT
+
+  # 8. 线程池队列满
+  thread-pool-exhausted-001:
+    category: RESOURCE
+    root_cause: THREAD_POOL_EXHAUSTED
+    affected_service: inventory-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        delay_ms: 5000
+    expected_signals:
+      logs:
+        - "Thread pool queue full"
+      metrics:
+        - "tomcat_threads_busy > 0.95"
+    forbidden_conclusions:
+      - DATABASE_LATENCY
+
+  # 9. 配置错误
+  config-error-001:
+    category: CONFIG
+    root_cause: CONFIG_ERROR
+    affected_service: order-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        exception_type: NULL_POINTER
+    expected_signals:
+      logs:
+        - "NullPointerException"
+      metrics:
+        - "http_server_errors > 0"
+    forbidden_conclusions:
+      - REDIS_TIMEOUT
+
+  # 10. 发布后空指针
+  deployment-npe-001:
+    category: DEPLOYMENT
+    root_cause: NULL_POINTER_EXCEPTION
+    affected_service: order-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        exception_type: NULL_POINTER
+    expected_signals:
+      logs:
+        - "NullPointerException after deployment"
+      metrics:
+        - "http_server_errors > 0"
+    forbidden_conclusions:
+      - DATABASE_LATENCY
+
+  # 11. 限流或熔断
+  rate-limit-circuit-breaker-001:
+    category: RESILIENCE
+    root_cause: CIRCUIT_BREAKER_TRIGGERED
+    affected_service: order-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        exception_type: SERVICE_UNAVAILABLE
+    expected_signals:
+      logs:
+        - "Circuit breaker open"
+      metrics:
+        - "circuit_breaker_open > 0"
+    forbidden_conclusions:
+      - REDIS_TIMEOUT
+
+  # 12. RocketMQ 消费积压（进阶）
+  rocketmq-consumer-lag-001:
+    category: MESSAGING
+    root_cause: CONSUMER_LAG
+    affected_service: order-service
+    trigger:
+      type: feature_toggle
+      parameters:
+        lag_count: 10000
+    expected_signals:
+      logs:
+        - "Message consumer lag detected"
+      metrics:
+        - "mq_consumer_lag > 5000"
+    forbidden_conclusions:
+      - DATABASE_LATENCY

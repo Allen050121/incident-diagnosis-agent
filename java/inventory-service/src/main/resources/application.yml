@@ -26,3 +26,6 @@ management:
     export:
       prometheus:
         enabled: true
+
+fault:
+  enabled: true

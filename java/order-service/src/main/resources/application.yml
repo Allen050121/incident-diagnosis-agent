@@ -30,3 +30,6 @@ management:
 logging:
   level:
     com.example.incident: DEBUG
+
+fault:
+  enabled: true

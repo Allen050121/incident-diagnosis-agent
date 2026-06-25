@@ -1,7 +1,27 @@
 {
   "permissions": {
     "allow": [
-      "Bash(D:/yangjw/software/Miniconda/Scripts/conda.exe create *)"
+      "Bash(D:/yangjw/software/Miniconda/Scripts/conda.exe create *)",
+      "Bash(curl -s http://localhost:9081/api/orders)",
+      "Bash(curl -s http://localhost:9082/api/inventory)",
+      "Bash(curl -s -X POST http://localhost:9083/api/payment/process -H \"Content-Type: application/json\" -d \"{\\\\\"orderId\\\\\":\\\\\"ORD-001\\\\\",\\\\\"amount\\\\\":5999}\")",
+      "Bash(curl -s -X POST http://localhost:9081/internal/v1/faults/mysql-slow-query/activate -H \"Content-Type: application/json\" -d \"{\\\\\"delay_ms\\\\\": 1800}\")",
+      "Bash(curl -w \"\\\\n=== Time: %{time_total}s ===\\\\n\" http://localhost:9081/api/orders)",
+      "Bash(curl -s -X POST http://localhost:9082/internal/v1/faults/redis-timeout/activate -H \"Content-Type: application/json\" -d \"{\\\\\"delay_ms\\\\\": 2000}\")",
+      "Bash(curl -s -X POST http://localhost:9083/internal/v1/faults/downstream-payment-timeout/activate -H \"Content-Type: application/json\" -d \"{\\\\\"delay_ms\\\\\": 3000}\")",
+      "Bash(curl -w \"\\\\n=== Inventory Time: %{time_total}s ===\\\\n\" http://localhost:9082/api/inventory/PROD-001)",
+      "Bash(curl -w \"\\\\n=== Payment Time: %{time_total}s ===\\\\n\" -X POST http://localhost:9083/api/payment/process -H \"Content-Type: application/json\" -d \"{\\\\\"orderId\\\\\":\\\\\"ORD-002\\\\\",\\\\\"amount\\\\\":99}\")",
+      "Bash(curl -s http://localhost:9081/internal/v1/faults)",
+      "Bash(curl -s http://localhost:9082/internal/v1/faults)",
+      "Bash(curl -s http://localhost:9083/internal/v1/faults)",
+      "Bash(curl -s -X POST http://localhost:9081/internal/v1/faults/reset)",
+      "Bash(curl -s -X POST http://localhost:9082/internal/v1/faults/reset)",
+      "Bash(curl -s -X POST http://localhost:9083/internal/v1/faults/reset)",
+      "Bash(curl -w \"\\\\n=== Orders Time: %{time_total}s ===\\\\n\" http://localhost:9081/api/orders)",
+      "Bash(curl -w \"\\\\n=== Inventory Time: %{time_total}s ===\\\\n\" http://localhost:9082/api/inventory)",
+      "Bash(curl -w \"\\\\n=== Payment Time: %{time_total}s ===\\\\n\" -X POST http://localhost:9083/api/payment/process -H \"Content-Type: application/json\" -d \"{\\\\\"orderId\\\\\":\\\\\"ORD-003\\\\\"}\")",
+      "Bash(curl -s http://localhost:9081/actuator/prometheus)",
+      "Bash(git commit -m 'fix: add lombok dependency and change incident-platform port to 9084 *)"
     ]
   }
 }

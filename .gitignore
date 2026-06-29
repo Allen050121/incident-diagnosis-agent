@@ -28,6 +28,9 @@ pip-delete-this-directory.txt
 *.swo
 *~
 *.iml
+.claude/
+AGENTS.md
+CLAUDE.md
 
 # Docker
 docker-compose.override.yml
@@ -48,6 +51,8 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+python/.env
+python/.env.local
 
 # AI Team State (本地状态,不上传)
 .ai-team/state/collaboration.json

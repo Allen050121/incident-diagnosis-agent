@@ -194,6 +194,19 @@ Copy `python/.env.example` to `python/.env` and configure:
 - [Fault Inventory](docs/fault-inventory.md) - 12 fault scenarios
 - [Evaluation Report](docs/evaluation-report.md) - LLM vs rule-based analysis
 
+## Known Limitations (MVP)
+
+This project is a fault diagnosis MVP. Known limitations:
+
+- **Scale**: Fault target is far smaller than real production systems (3 services, 12 faults)
+- **Data bias**: Log and metric patterns are synthetic, not from real incidents
+- **Single faults**: Primarily single-fault scenarios; complex cascading failures are under-covered
+- **Closed root cause set**: Root cause labels are a fixed vocabulary, generalization is limited
+- **No real CMDB**: Uses fake deployment data instead of real change management systems
+- **No auto-remediation**: Agent only diagnoses and recommends; no automatic fix loop
+
+These are intentional for the MVP — the focus is on validating tool usage, evidence chains, and evaluable diagnosis workflows rather than production readiness.
+
 ## License
 
 MIT

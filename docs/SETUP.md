@@ -30,19 +30,15 @@ mvn clean install -DskipTests
 ### 3. Run Java Services (in separate terminals)
 
 ```bash
-# Terminal 1 - Incident Platform
-cd java/incident-platform
-mvn spring-boot:run
-
-# Terminal 2 - Order Service
+# Terminal 1 - Order Service
 cd java/order-service
 mvn spring-boot:run
 
-# Terminal 3 - Inventory Service
+# Terminal 2 - Inventory Service
 cd java/inventory-service
 mvn spring-boot:run
 
-# Terminal 4 - Payment Mock Service
+# Terminal 3 - Payment Mock Service
 cd java/payment-mock-service
 mvn spring-boot:run
 ```
@@ -64,10 +60,9 @@ uvicorn app.main:app --reload --port 8000
 
 ### 6. Verify All Services
 
-- Incident Platform: http://localhost:8080/actuator/health
-- Order Service: http://localhost:8081/actuator/health
-- Inventory Service: http://localhost:8082/actuator/health
-- Payment Mock: http://localhost:8083/actuator/health
+- Order Service: http://localhost:9081/actuator/health
+- Inventory Service: http://localhost:9082/actuator/health
+- Payment Mock: http://localhost:9083/actuator/health
 - Python Agent: http://localhost:8000/health
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000 (admin/admin)
@@ -75,10 +70,9 @@ uvicorn app.main:app --reload --port 8000
 
 ## Next Steps
 
-1. Configure fault injection scenarios in `java/incident-platform/src/main/java/com/example/incident/faultscenario/`
-2. Implement LangGraph workflow in `python/app/agent/graph.py`
-3. Add tool implementations in `python/app/infrastructure/tools/`
-4. Create Runbook documents for RAG
+1. Implement fault injection scenarios in `java/*/src/main/java/.../faultinjection/`
+2. Run evaluation pipeline: `cd python && python -m app.evaluation.run_full_eval`
+3. Inject faults and test diagnosis: `bash scripts/trigger-fault.sh order-service mysql-slow-query`
 
 ## Troubleshooting
 
@@ -92,4 +86,4 @@ Verify Redis is accessible: `redis-cli ping`
 
 ### Port Conflicts
 
-Modify port numbers in `application.yml` files if ports 8080-8083 are already in use.
+Modify port numbers in `application.yml` files if ports 9081-9083 are already in use.

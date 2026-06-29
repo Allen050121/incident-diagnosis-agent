@@ -18,24 +18,23 @@
 ### 2. 检查模块配置
 
 File → Project Structure → Modules:
-- 确认 4 个模块正确识别:
-  - incident-platform
+- 确认 3 个模块正确识别:
   - order-service
   - inventory-service
   - payment-mock-service
 
 ### 3. 配置运行配置 (Run Configurations)
 
-**创建 4 个 Spring Boot 运行配置:**
+**创建 3 个 Spring Boot 运行配置:**
 
 ```
-Name: incident-platform
-Main class: com.example.incident.IncidentPlatformApplication
-Module: incident-platform
+Name: order-service
+Main class: com.example.incident.OrderServiceApplication
+Module: order-service
 Working directory: $MODULE_WORKING_DIR$
 ```
 
-重复以上步骤为其他三个服务创建配置。
+重复以上步骤为其他两个服务创建配置。
 
 ### 4. 验证编译
 
@@ -78,15 +77,11 @@ Working directory: $ProjectFileDir$
 ### 1. 复制配置文件
 
 ```bash
-# Java 服务
-cp java/incident-platform/src/main/resources/application.yml.example \
-   java/incident-platform/src/main/resources/application.yml
-
 # Python Agent
 cp python/app/config.py.example python/app/config.py
 
 # 环境变量模板
-cp .env.example .env
+cp python/.env.example python/.env
 ```
 
 ### 2. 配置敏感信息
@@ -127,11 +122,10 @@ docker-compose ps
 
 ### Java 服务验证
 
-在 IDEA 中分别启动 4 个服务,访问:
-- http://localhost:8080/actuator/health (incident-platform)
-- http://localhost:8081/actuator/health (order-service)
-- http://localhost:8082/actuator/health (inventory-service)
-- http://localhost:8083/actuator/health (payment-mock-service)
+在 IDEA 中分别启动 3 个服务,访问:
+- http://localhost:9081/actuator/health (order-service)
+- http://localhost:9082/actuator/health (inventory-service)
+- http://localhost:9083/actuator/health (payment-mock-service)
 
 应该返回 `{"status":"UP"}`
 

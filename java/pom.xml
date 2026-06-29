@@ -23,7 +23,6 @@
         <module>order-service</module>
         <module>inventory-service</module>
         <module>payment-mock-service</module>
-        <module>incident-platform</module>
     </modules>
 
     <properties>

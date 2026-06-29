@@ -26,7 +26,7 @@ status: active
 
 ## Project Structure
 
-- `java/` - Four Spring Boot microservices (order-service, inventory-service, payment-mock-service, incident-platform)
+- `java/` - Three Spring Boot microservices (order-service, inventory-service, payment-mock-service)
 - `python/` - FastAPI Agent with LangGraph workflow
 - `docker/` - Infrastructure configs (MySQL, Redis, Prometheus, Loki, Elasticsearch, RocketMQ)
 - `scripts/` - Fault injection and evaluation scripts

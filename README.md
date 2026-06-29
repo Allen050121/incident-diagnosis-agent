@@ -6,14 +6,12 @@ AI-powered incident diagnosis agent for Spring Boot microservices. Automatically
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   incident-platform                  │
-│              (Alert & Task Management)               │
-│                   Port: 9084                         │
-├──────────┬──────────┬───────────────┬───────────────┤
-│  order-  │inventory-│   payment-    │               │
-│  service │ service  │ mock-service  │               │
-│  :9081   │  :9082   │   :9083       │               │
-└──────────┴──────────┴───────────────┴───────────────┘
+│           Java Microservices (Fault Targets)          │
+├──────────┬──────────┬───────────────────────────────┤
+│  order-  │inventory-│   payment-                     │
+│  service │ service  │   mock-service                 │
+│  :9081   │  :9082   │   :9083                        │
+└──────────┴──────────┴───────────────────────────────┘
          │              │               │
          ▼              ▼               ▼
 ┌─────────────────────────────────────────────────────┐
@@ -52,11 +50,10 @@ AI-powered incident diagnosis agent for Spring Boot microservices. Automatically
 
 ```text
 .
-├── java/                          # 4 Spring Boot microservices
+├── java/                          # 3 Spring Boot microservices (fault targets)
 │   ├── order-service/             # Order entry service (:9081)
 │   ├── inventory-service/         # Inventory service (:9082)
-│   ├── payment-mock-service/      # Payment mock (:9083)
-│   └── incident-platform/         # Diagnosis platform (:9084)
+│   └── payment-mock-service/      # Payment mock (:9083)
 ├── python/                        # Python FastAPI Agent
 │   ├── .env.example               # Config template (copy to .env)
 │   ├── app/
@@ -70,7 +67,7 @@ AI-powered incident diagnosis agent for Spring Boot microservices. Automatically
 │   │   │   └── evidence_*.py      # Evidence governance
 │   │   ├── evaluation/            # LLM vs rule-based comparison
 │   │   ├── domain/                # Incident, Evidence, Hypothesis models
-│   │   └── tests/                 # 71 tests (all phases)
+│   │   └── tests/                 # 102 tests (all phases)
 │   └── requirements.txt
 ├── docker/                        # Infrastructure configs
 ├── scripts/                       # Fault injection & eval scripts
@@ -99,8 +96,7 @@ docker-compose up -d mysql redis loki prometheus elasticsearch
 ```bash
 cd java
 mvn clean install
-cd incident-platform && mvn spring-boot:run &
-cd ../order-service && mvn spring-boot:run &
+cd order-service && mvn spring-boot:run &
 cd ../inventory-service && mvn spring-boot:run &
 cd ../payment-mock-service && mvn spring-boot:run &
 ```
@@ -175,7 +171,7 @@ curl -X POST http://localhost:9081/internal/v1/faults/mysql-slow-query/reset
 ```bash
 cd python
 pytest app/tests/ -v
-# 71 tests across all phases
+# 102 tests across all phases
 ```
 
 ## Configuration
@@ -189,7 +185,6 @@ Copy `python/.env.example` to `python/.env` and configure:
 | `LLM_BASE_URL` | API base URL (default: `https://api.deepseek.com`) |
 | `DB_HOST` | MySQL host |
 | `REDIS_HOST` | Redis host |
-| `PLATFORM_URL` | incident-platform URL |
 
 **Important:** Never commit `.env` to git. Only `.env.example` with placeholder values is tracked.
 

@@ -97,6 +97,30 @@
                       "updated_at":  "2026-06-29T11:00:00.0000000+08:00",
                       "business":  "Evidence governance: log dedup, runbook versioning, BM25 search, traceability.",
                       "task_card":  ".ai-team/tasks/phase4-evidence-rag.md"
+                  },
+                  {
+                      "task_id":  "phase5-async-recovery",
+                      "title":  "阶段5：异步任务与恢复",
+                      "status":  "completed",
+                      "task_type":  "implementation",
+                      "delivery_stage":  "build",
+                      "mode":  "serial",
+                      "work_mode":  "MVP",
+                      "workflow_mode":  "standard",
+                      "branch":  "",
+                      "github_issue":  "",
+                      "github_pr":  "",
+                      "ci_status":  "",
+                      "dependencies":  [
+                                          "phase4-evidence-rag"
+                                      ],
+                      "last_run_id":  "phase5-async-recovery-executor-20260629120000",
+                      "last_result":  "passed",
+                      "blocked_reason":  "",
+                      "verification_status":  "passed",
+                      "updated_at":  "2026-06-29T12:00:00.0000000+08:00",
+                      "business":  "Async tasks with Redis Streams, checkpointer, SSE, cancellation.",
+                      "task_card":  ".ai-team/tasks/phase5-async-recovery.md"
                   }
               ]
 }

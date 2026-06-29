@@ -1,6 +1,6 @@
 {
     "version":  1,
-    "updatedAt":  "2026-06-29T11:00:00.0000000+08:00",
+    "updatedAt":  "2026-06-29T12:00:00.0000000+08:00",
     "runs":  [
                  {
                      "run_id":  "phase1-fault-target-executor-20260625170303",
@@ -88,6 +88,33 @@
                                          "Runbook versioning and lifecycle tested",
                                          "BM25 search and MRR evaluation tested",
                                          "No-evidence conclusion rejection tested"
+                                     ],
+                     "human_decisions":  [],
+                     "blocked_reason":  "",
+                     "followups":  []
+                 },
+                 {
+                     "run_id":  "phase5-async-recovery-executor-20260629120000",
+                     "task_id":  "phase5-async-recovery",
+                     "role":  "executor",
+                     "status":  "passed",
+                     "started_at":  "2026-06-29T12:00:00.0000000+08:00",
+                     "finished_at":  "2026-06-29T12:00:00.0000000+08:00",
+                     "changed_files":  [
+                                         "python/app/infrastructure/redis_client.py",
+                                         "python/app/infrastructure/task_queue.py",
+                                         "python/app/infrastructure/checkpointer.py",
+                                         "python/app/infrastructure/sse_manager.py",
+                                         "python/app/worker/diagnosis_worker.py",
+                                         "python/app/api/router.py",
+                                         "python/app/tests/test_phase5.py"
+                                     ],
+                     "verification":  [
+                                         "43/43 tests passed (pytest, 1.35s)",
+                                         "Async diagnosis API tested",
+                                         "Task status and cancel API tested",
+                                         "SSE event streaming tested",
+                                         "Crash recovery via checkpointer tested"
                                      ],
                      "human_decisions":  [],
                      "blocked_reason":  "",

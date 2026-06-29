@@ -1,7 +1,6 @@
 """LLM vs rule-based diagnosis comparison and evaluation."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
 
 from app.agent.graph import DiagnosisAgent

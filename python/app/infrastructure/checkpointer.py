@@ -12,9 +12,8 @@ Large log data is NOT stored - only references and summaries.
 """
 
 import json
-from dataclasses import asdict
-from datetime import datetime
-from typing import Any, Optional, Protocol
+from datetime import UTC, datetime
+from typing import Optional, Protocol
 
 from app.infrastructure.redis_client import get_redis
 
@@ -44,7 +43,7 @@ class RedisCheckpointer:
         checkpoint = {
             "task_id": task_id,
             "node": node,
-            "saved_at": datetime.utcnow().isoformat(),
+            "saved_at": datetime.now(UTC).isoformat(),
             "state": _serialize_state(state),
         }
 
@@ -81,7 +80,7 @@ class InMemoryCheckpointer:
         self._store[task_id] = {
             "task_id": task_id,
             "node": node,
-            "saved_at": datetime.utcnow().isoformat(),
+            "saved_at": datetime.now(UTC).isoformat(),
             "state": _serialize_state(state),
         }
 

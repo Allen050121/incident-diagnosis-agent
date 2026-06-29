@@ -1,20 +1,21 @@
 """15 seed unit tests for the diagnosis agent - Phase 3 exit criteria"""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
-from app.agent.graph import DiagnosisAgent
-from app.agent.service import create_agent_with_fake_tools, parse_incident
-from app.domain.incident import AlertType, ConfidenceLevel, Incident, IncidentStatus
+from app.agent.service import create_agent_with_configured_tools, create_agent_with_fake_tools, parse_incident
+from app.domain.incident import AlertType, Incident
 from app.infrastructure.fake_tools import (
     FakeDeploymentProvider,
     FakeLogProvider,
     FakeMetricsProvider,
     FakeRunbookProvider,
 )
-from app.infrastructure.tool_definitions import ALLOWED_METRICS, ALLOWED_TOOLS, ToolInput, validate_tool_input
+from app.infrastructure.file_logs import FileLogProvider
+from app.infrastructure.prometheus_metrics import PrometheusMetricsProvider
+from app.infrastructure.tool_definitions import ToolInput, validate_tool_input
 from app.infrastructure.tool_executor import ToolExecutor
 
 
@@ -67,6 +68,58 @@ async def test_fake_log_provider_returns_logs():
     assert result["logs"][0]["level"] in ("ERROR", "WARN", "INFO")
 
 
+@pytest.mark.asyncio
+async def test_file_log_provider_reads_and_filters_spring_logs(tmp_path):
+    log_file = tmp_path / "order-service.log"
+    log_file.write_text(
+        "\n".join([
+            "2026-06-29 16:40:00.001  INFO 123 --- [main] c.e.i.OrderController : Order processed successfully",
+            "2026-06-29 16:40:01.002  WARN 123 --- [nio-9081-exec-1] c.e.i.FaultInjector : Fault injection: mysql-slow-query - simulating 1800ms delay",
+            "2026-06-29 16:40:02.003 ERROR 123 --- [nio-9081-exec-2] c.e.i.OrderController : SQLSlowQueryException: query execution exceeded threshold",
+            "java.lang.RuntimeException: stack trace line",
+        ]),
+        encoding="utf-8",
+    )
+
+    provider = FileLogProvider(str(tmp_path))
+    result = await provider.execute({
+        "service": "order-service",
+        "keywords": ["slow", "sql"],
+        "max_results": 10,
+    })
+
+    assert result["source"] == "file"
+    assert result["total_count"] == 2
+    assert result["error_stats"]["ERROR"] == 1
+    assert result["error_stats"]["WARN"] == 1
+    assert "SQLSlowQueryException" in result["logs"][-1]["message"]
+    assert "stack trace line" in result["logs"][-1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_file_log_provider_filters_by_incident_window(tmp_path):
+    log_file = tmp_path / "order-service.log"
+    log_file.write_text(
+        "\n".join([
+            "2026-06-29 16:30:00.001  WARN 123 --- [nio-9081-exec-1] c.e.i.FaultInjector : old mysql-slow-query signal",
+            "2026-06-29 16:40:00.001  WARN 123 --- [nio-9081-exec-2] c.e.i.FaultInjector : current mysql-slow-query signal",
+        ]),
+        encoding="utf-8",
+    )
+
+    provider = FileLogProvider(str(tmp_path))
+    result = await provider.execute({
+        "service": "order-service",
+        "keywords": ["mysql-slow-query"],
+        "start_time": "2026-06-29T16:39:30",
+        "end_time": "2026-06-29T16:41:00",
+        "max_results": 10,
+    })
+
+    assert result["total_count"] == 1
+    assert "current mysql-slow-query signal" in result["logs"][0]["message"]
+
+
 # ============================================================
 # Test 6: FakeMetricsProvider returns metric data with baseline/current
 # ============================================================
@@ -79,6 +132,71 @@ async def test_fake_metrics_provider_returns_metric_data():
     assert "current" in result
     assert "peak" in result
     assert result["current"] > result["baseline"]  # Should show anomaly
+
+
+@pytest.mark.asyncio
+async def test_prometheus_metrics_provider_parses_query_response(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {"job": "order-service"},
+                            "value": [1234567890.0, "0.25"],
+                        }
+                    ]
+                },
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, params):
+            assert url == "http://prometheus:9090/api/v1/query"
+            assert "http_server_requests_seconds_count" in params["query"]
+            return FakeResponse()
+
+    monkeypatch.setattr("app.infrastructure.prometheus_metrics.httpx.AsyncClient", FakeAsyncClient)
+
+    provider = PrometheusMetricsProvider("http://prometheus:9090")
+    result = await provider.execute({"metric": "request_rate", "service": "order-service"})
+
+    assert result["source"] == "prometheus"
+    assert result["metric"] == "request_rate"
+    assert result["current"] == 0.25
+    assert result["series_count"] == 1
+
+
+def test_configured_agent_can_use_prometheus_metrics(monkeypatch):
+    monkeypatch.setattr("app.agent.service.settings.metrics_provider", "prometheus")
+    monkeypatch.setattr("app.agent.service.settings.prometheus_url", "http://prometheus:9090")
+
+    agent = create_agent_with_configured_tools()
+    provider = agent._executor._providers["query_metrics"]
+
+    assert isinstance(provider, PrometheusMetricsProvider)
+
+
+def test_configured_agent_can_use_file_logs(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.agent.service.settings.log_provider", "file")
+    monkeypatch.setattr("app.agent.service.settings.log_base_dir", str(tmp_path))
+
+    agent = create_agent_with_configured_tools()
+    provider = agent._executor._providers["query_logs"]
+
+    assert isinstance(provider, FileLogProvider)
 
 
 # ============================================================
@@ -149,7 +267,7 @@ async def test_agent_creates_latency_plan():
         alert_type=AlertType.P95_LATENCY_HIGH,
         value=1800.0,
         threshold=500.0,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     report = await agent.diagnose(incident)
     # Should have used multiple tool calls
@@ -170,7 +288,7 @@ async def test_agent_hypotheses_have_evidence():
         alert_type=AlertType.P95_LATENCY_HIGH,
         value=1800.0,
         threshold=500.0,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     report = await agent.diagnose(incident)
     assert len(report.top_causes) > 0
@@ -179,6 +297,27 @@ async def test_agent_hypotheses_have_evidence():
     # Evidence IDs should be non-empty strings
     for eid in report.top_causes[0].supporting_evidence:
         assert len(eid) > 0
+
+
+@pytest.mark.asyncio
+async def test_agent_report_includes_evidence_details():
+    agent = create_agent_with_fake_tools()
+    incident = Incident(
+        incident_id="INC-TEST-EVIDENCE",
+        service="order-service",
+        endpoint="/api/orders",
+        alert_type=AlertType.P95_LATENCY_HIGH,
+        value=1800.0,
+        threshold=500.0,
+        started_at=datetime.now(UTC),
+    )
+
+    report = await agent.diagnose(incident)
+
+    assert report.evidence_details
+    assert {detail.evidence_id for detail in report.evidence_details} >= set(report.evidence_ids)
+    assert any("Logs:" in detail.summary for detail in report.evidence_details)
+    assert any("Metric" in detail.summary for detail in report.evidence_details)
 
 
 # ============================================================
@@ -194,7 +333,7 @@ async def test_agent_report_diagnosed_status():
         alert_type=AlertType.P95_LATENCY_HIGH,
         value=1800.0,
         threshold=500.0,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     report = await agent.diagnose(incident)
     # With mysql_slow_query fake data, should get a diagnosis
@@ -216,7 +355,7 @@ async def test_report_references_only_real_evidence():
         alert_type=AlertType.ERROR_RATE_HIGH,
         value=0.15,
         threshold=0.01,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     report = await agent.diagnose(incident)
     # All evidence IDs in report should be in the evidence_ids list

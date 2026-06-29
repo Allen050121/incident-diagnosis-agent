@@ -4,7 +4,6 @@ Handles: phone numbers, API tokens, passwords, auth headers, emails, IP addresse
 """
 
 import re
-from typing import Optional
 
 
 # Pre-compiled patterns for performance

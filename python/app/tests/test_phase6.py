@@ -1,17 +1,19 @@
 """Phase 6 tests: LLM integration, LLM diagnosis agent, and evaluation."""
 
 import json
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.agent.graph import DiagnosisAgent
-from app.agent.llm_graph import LLMDiagnosisAgent
+from app.agent.llm_graph import (
+    LLMDiagnosisAgent,
+    _merge_required_steps,
+    _remove_metric_contradicted_hypotheses,
+    _rule_based_hypotheses,
+)
 from app.agent.service import (
-    create_agent_with_fake_tools,
     create_llm_agent_with_fake_tools,
-    parse_incident,
 )
 from app.domain.incident import (
     AlertType,
@@ -20,7 +22,7 @@ from app.domain.incident import (
     Evidence,
     Hypothesis,
     Incident,
-    IncidentStatus,
+    PlanStep,
 )
 from app.evaluation.comparator import (
     EvaluationResult,
@@ -57,7 +59,7 @@ def _make_incident(incident_id="INC-001", alert_type=AlertType.P95_LATENCY_HIGH,
         alert_type=alert_type,
         value=5000.0,
         threshold=1000.0,
-        started_at=datetime.utcnow() - timedelta(minutes=10),
+        started_at=datetime.now(UTC) - timedelta(minutes=10),
     )
 
 
@@ -362,6 +364,141 @@ async def test_llm_agent_evidence_ids_in_report():
     assert len(report.evidence_ids) > 0
 
 
+@pytest.mark.asyncio
+async def test_llm_agent_guardrail_recovers_when_llm_skips_metrics():
+    """Required evidence guardrails recover when the LLM plan misses metrics."""
+    executor = _make_executor()
+    fake_llm = FakeLLMClient(
+        plan_response=[
+            {"tool": "query_logs", "purpose": "Find application warnings",
+             "parameters": {"service": "order-service", "keywords": ["warning"]}},
+            {"tool": "query_deployments", "purpose": "Check recent deploys",
+             "parameters": {"service": "order-service"}},
+        ],
+        hypothesis_response={
+            "hypotheses": [
+                {
+                    "cause_code": "APPLICATION_ERROR_SPIKE",
+                    "confidence": "MEDIUM",
+                    "reasoning_summary": "Fault injection warnings suggest deliberate delay.",
+                    "supporting_evidence_ids": ["LOG-DOESNOTMATTER"],
+                    "contradicting_evidence_ids": [],
+                }
+            ]
+        },
+        report_response={
+            "status": "INCONCLUSIVE",
+            "summary": "Insufficient metric evidence.",
+            "recommended_actions": ["Disable FaultInjector if active"],
+            "missing_evidence": ["database latency metrics"],
+        },
+    )
+    agent = LLMDiagnosisAgent(tool_executor=executor, llm_client=fake_llm, max_tool_calls=10)
+    incident = _make_incident()
+
+    report = await agent.diagnose(incident)
+
+    assert report.status == "DIAGNOSED"
+    assert report.top_causes[0].cause_code == "DATABASE_SLOW_QUERY"
+    assert report.top_causes[0].confidence.value == "HIGH"
+    assert any(
+        detail.source == "query_metrics"
+        and detail.content.get("metric") == "latency_p95"
+        for detail in report.evidence_details
+    )
+    assert any("missing" in action.lower() or "query" in action.lower()
+               for action in report.recommended_actions)
+
+
+def test_llm_guardrail_does_not_treat_hikari_startup_as_pool_exhaustion():
+    """Hikari startup logs are not connection pool exhaustion evidence."""
+    incident = _make_incident()
+    evidence = [
+        Evidence(
+            evidence_id="LOG-STARTUP",
+            source="query_logs",
+            content={
+                "logs": [
+                    {
+                        "level": "INFO",
+                        "message": "com.zaxxer.hikari.HikariDataSource : HikariPool-1 - Start completed.",
+                    }
+                ]
+            },
+        ),
+        Evidence(
+            evidence_id="METRIC-POOL",
+            source="query_metrics",
+            content={"metric": "db_pool_active_ratio", "current": 0.0, "baseline": 0.5},
+        ),
+    ]
+
+    hypotheses = _rule_based_hypotheses(incident, evidence)
+
+    assert all(h.cause_code != "DATABASE_CONNECTION_POOL_EXHAUSTED" for h in hypotheses)
+
+
+def test_llm_plan_guardrail_deduplicates_log_and_deployment_steps():
+    """Mandatory evidence steps are first and duplicate log/deployment calls are removed."""
+    llm_steps = [
+        PlanStep(tool="query_logs", purpose="Generic warnings",
+                 parameters={"service": "order-service", "keywords": ["warning"]}),
+        PlanStep(tool="query_deployments", purpose="Check deploy",
+                 parameters={"service": "order-service", "hours": 24}),
+        PlanStep(tool="search_runbooks", purpose="Search runbooks",
+                 parameters={"query": "mysql slow query"}),
+    ]
+    required_steps = [
+        PlanStep(tool="query_metrics", purpose="Check P95 latency",
+                 parameters={"metric": "latency_p95", "service": "order-service"}),
+        PlanStep(tool="query_metrics", purpose="Check DB pool",
+                 parameters={"metric": "db_pool_active_ratio", "service": "order-service"}),
+        PlanStep(tool="query_logs", purpose="Find slow queries",
+                 parameters={"service": "order-service", "keywords": ["slow", "timeout"]}),
+        PlanStep(tool="query_deployments", purpose="Check recent deploys",
+                 parameters={"service": "order-service"}),
+    ]
+
+    merged = _merge_required_steps(llm_steps, required_steps, max_tool_calls=10)
+
+    assert [step.tool for step in merged[:4]] == [
+        "query_metrics",
+        "query_metrics",
+        "query_logs",
+        "query_deployments",
+    ]
+    assert sum(1 for step in merged if step.tool == "query_logs") == 1
+    assert sum(1 for step in merged if step.tool == "query_deployments") == 1
+    assert any(step.tool == "search_runbooks" for step in merged)
+
+
+def test_llm_guardrail_removes_pool_cause_when_metric_contradicts_it():
+    """Low DB pool usage is negative evidence against pool exhaustion."""
+    hypotheses = [
+        Hypothesis(
+            cause_code="DATABASE_CONNECTION_POOL_EXHAUSTED",
+            confidence=ConfidenceLevel.HIGH,
+            supporting_evidence=["LOG-POOL"],
+        ),
+        Hypothesis(
+            cause_code="DATABASE_SLOW_QUERY",
+            confidence=ConfidenceLevel.HIGH,
+            supporting_evidence=["METRIC-LATENCY"],
+        ),
+    ]
+    evidence = [
+        Evidence(
+            evidence_id="METRIC-POOL",
+            source="query_metrics",
+            content={"metric": "db_pool_active_ratio", "current": 0.0, "baseline": 0.5},
+        )
+    ]
+
+    filtered = _remove_metric_contradicted_hypotheses(hypotheses, evidence)
+
+    assert [hypothesis.cause_code for hypothesis in filtered] == ["DATABASE_SLOW_QUERY"]
+
+
 # === Evaluation Tests ===
 
 
@@ -471,7 +608,6 @@ async def test_create_llm_agent_produces_report():
 
 def test_chat_json_extracts_from_markdown_block():
     """chat_json can extract JSON from markdown code blocks."""
-    client = LLMClient(api_key="")
     # Test the extraction logic directly
     text = 'Here is the result:\n```json\n{"status": "DIAGNOSED"}\n```\nDone.'
     # The extraction is in chat_json but we test the logic

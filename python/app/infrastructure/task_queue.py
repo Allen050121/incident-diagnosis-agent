@@ -17,12 +17,13 @@ Message format:
 """
 
 import json
-import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Optional
+
+import redis
 
 from app.infrastructure.redis_client import get_redis
 
@@ -67,7 +68,7 @@ class TaskMessage:
             "incidentId": self.incident_id,
             "schemaVersion": self.schema_version,
             "traceId": self.trace_id or f"TRACE-{self.task_id}",
-            "deadlineAt": self.deadline_at or (datetime.utcnow() + timedelta(minutes=5)).isoformat(),
+            "deadlineAt": self.deadline_at or (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
             "payload": json.dumps(self.payload),
             "retryCount": str(self.retry_count),
             "maxRetries": str(self.max_retries),
@@ -116,7 +117,7 @@ class TaskQueue:
 
     def publish(self, task: TaskMessage) -> str:
         """Publish a task to the main stream"""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Save task state
         state_key = f"{TASK_STATE_PREFIX}{task.task_id}"
@@ -158,7 +159,7 @@ class TaskQueue:
                     if task.deadline_at:
                         try:
                             deadline = datetime.fromisoformat(task.deadline_at)
-                            if datetime.utcnow() > deadline:
+                            if datetime.now(UTC) > deadline:
                                 # Expired - send to DLQ
                                 self._send_to_dlq(msg_id, task, "deadline exceeded")
                                 self.ack(msg_id)
@@ -168,7 +169,7 @@ class TaskQueue:
 
                     # Update task state
                     claim_key = f"{TASK_CLAIM_PREFIX}{task.task_id}"
-                    now = datetime.utcnow().isoformat()
+                    now = datetime.now(UTC).isoformat()
                     self._redis.hset(claim_key, mapping={
                         "claimed_by": consumer_name,
                         "claimed_at": now,
@@ -195,7 +196,7 @@ class TaskQueue:
     def complete(self, task_id: str, result: dict):
         """Mark task as completed"""
         state_key = f"{TASK_STATE_PREFIX}{task_id}"
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self._redis.hset(state_key, mapping={
             "status": TaskStatus.COMPLETED.value,
             "updated_at": now,
@@ -211,7 +212,7 @@ class TaskQueue:
         retry_count = int(state.get("retry_count", 0))
         max_retries = int(state.get("max_retries", 3))
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         if retry_count < max_retries:
             # Retry: re-publish to retry stream
@@ -249,7 +250,7 @@ class TaskQueue:
         if not self._redis.exists(state_key):
             return False
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self._redis.hset(state_key, mapping={
             "status": TaskStatus.CANCELLED.value,
             "updated_at": now,
@@ -287,7 +288,7 @@ class TaskQueue:
         dlq_data = task.to_dict()
         dlq_data["originalMsgId"] = msg_id
         dlq_data["error"] = error
-        dlq_data["dlqAt"] = datetime.utcnow().isoformat()
+        dlq_data["dlqAt"] = datetime.now(UTC).isoformat()
         self._redis.xadd(DLQ_STREAM, dlq_data)
 
 
@@ -300,7 +301,7 @@ class InMemoryTaskQueue:
         self._cancelled: set[str] = set()
 
     def publish(self, task: TaskMessage) -> str:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self._tasks[task.task_id] = TaskState(
             task_id=task.task_id,
             status=TaskStatus.QUEUED,
@@ -318,7 +319,7 @@ class InMemoryTaskQueue:
                 msg_id, task = self._queue.pop(0)
                 if task.task_id in self._cancelled:
                     continue
-                now = datetime.utcnow().isoformat()
+                now = datetime.now(UTC).isoformat()
                 state = self._tasks.get(task.task_id)
                 if state:
                     state.status = TaskStatus.CLAIMED
@@ -336,21 +337,21 @@ class InMemoryTaskQueue:
         if state:
             state.status = TaskStatus.COMPLETED
             state.result = result
-            state.updated_at = datetime.utcnow().isoformat()
+            state.updated_at = datetime.now(UTC).isoformat()
 
     def fail(self, task_id: str, error: str, msg_id: str | None = None):
         state = self._tasks.get(task_id)
         if state:
             state.status = TaskStatus.FAILED
             state.error = error
-            state.updated_at = datetime.utcnow().isoformat()
+            state.updated_at = datetime.now(UTC).isoformat()
 
     def cancel(self, task_id: str) -> bool:
         self._cancelled.add(task_id)
         state = self._tasks.get(task_id)
         if state:
             state.status = TaskStatus.CANCELLED
-            state.updated_at = datetime.utcnow().isoformat()
+            state.updated_at = datetime.now(UTC).isoformat()
             return True
         return False
 

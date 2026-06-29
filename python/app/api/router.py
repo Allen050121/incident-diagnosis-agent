@@ -1,14 +1,13 @@
 """API router for diagnosis endpoints - sync, async, and SSE"""
 
-import asyncio
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.agent.service import create_agent_with_fake_tools, parse_incident
+from app.agent.service import create_agent_from_settings, parse_incident
 from app.infrastructure.sse_manager import sse_manager
 from app.infrastructure.task_queue import InMemoryTaskQueue, TaskMessage
 from app.worker.diagnosis_worker import DiagnosisWorker
@@ -39,6 +38,15 @@ class HypothesisResponse(BaseModel):
     reasoning_summary: str
 
 
+class EvidenceDetailResponse(BaseModel):
+    evidence_id: str
+    source: str
+    summary: str
+    query_window: dict | None = None
+    truncated: bool = False
+    content: dict = {}
+
+
 class DiagnosisResponse(BaseModel):
     incident_id: str
     status: str
@@ -47,6 +55,7 @@ class DiagnosisResponse(BaseModel):
     missing_evidence: list[str]
     tool_failures: list[str]
     evidence_ids: list[str]
+    evidence_details: list[EvidenceDetailResponse]
     investigation_steps: int
     total_tool_calls: int
 
@@ -74,7 +83,7 @@ class TaskStatusResponse(BaseModel):
 async def start_diagnosis(request: DiagnosisRequest):
     """Start a synchronous diagnosis - runs the full agent pipeline"""
     incident = parse_incident(request.model_dump())
-    agent = create_agent_with_fake_tools()
+    agent = create_agent_from_settings()
     report = await agent.diagnose(incident)
 
     return DiagnosisResponse(
@@ -95,6 +104,17 @@ async def start_diagnosis(request: DiagnosisRequest):
         missing_evidence=report.missing_evidence,
         tool_failures=report.tool_failures,
         evidence_ids=report.evidence_ids,
+        evidence_details=[
+            EvidenceDetailResponse(
+                evidence_id=e.evidence_id,
+                source=e.source,
+                summary=e.summary,
+                query_window=e.query_window,
+                truncated=e.truncated,
+                content=e.content,
+            )
+            for e in report.evidence_details
+        ],
         investigation_steps=report.investigation_steps,
         total_tool_calls=report.total_tool_calls,
     )
@@ -118,7 +138,7 @@ async def start_async_diagnosis(request: DiagnosisRequest, background_tasks: Bac
         task_id=task_id,
         incident_id=request.incident_id,
         payload=request.model_dump(),
-        deadline_at=(datetime.utcnow() + timedelta(minutes=5)).isoformat(),
+        deadline_at=(datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
     )
 
     # Publish to queue
@@ -136,11 +156,10 @@ async def start_async_diagnosis(request: DiagnosisRequest, background_tasks: Bac
 
 async def _run_async_task(task_msg: TaskMessage):
     """Run diagnosis in background"""
-    worker = DiagnosisWorker(task_queue=_task_queue, agent=create_agent_with_fake_tools())
+    worker = DiagnosisWorker(task_queue=_task_queue, agent=create_agent_from_settings())
     _workers[task_msg.task_id] = worker
 
     try:
-        claimed = [(task_msg.task_id, task_msg)]  # Simulate claim
         await worker._run_diagnosis(task_msg.task_id, parse_incident(task_msg.payload))
         _task_queue.complete(task_msg.task_id, {"status": "completed"})
     except Exception as e:

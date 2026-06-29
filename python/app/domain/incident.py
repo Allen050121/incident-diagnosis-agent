@@ -1,7 +1,7 @@
 """Domain models for incident diagnosis"""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Optional
 
@@ -58,10 +58,20 @@ class Evidence:
     evidence_id: str
     source: str  # logs, metrics, deployments, runbooks
     content: dict
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     supports_hypothesis: bool = True
     query_window: Optional[dict] = None
     truncated: bool = False
+
+
+@dataclass
+class EvidenceDetail:
+    evidence_id: str
+    source: str
+    summary: str
+    query_window: Optional[dict] = None
+    truncated: bool = False
+    content: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -83,5 +93,6 @@ class DiagnosisReport:
     missing_evidence: list[str] = field(default_factory=list)
     tool_failures: list[str] = field(default_factory=list)
     evidence_ids: list[str] = field(default_factory=list)
+    evidence_details: list[EvidenceDetail] = field(default_factory=list)
     investigation_steps: int = 0
     total_tool_calls: int = 0

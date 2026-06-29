@@ -7,15 +7,13 @@ Runs 4 A/B experiments to prove each design decision improves diagnosis quality:
 4. Full logs vs Deduplicated/trimmed logs
 """
 
-import asyncio
 import time
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from app.agent.graph import DiagnosisAgent
-from app.agent.service import create_agent_with_fake_tools, parse_incident
-from app.domain.incident import DiagnosisReport
+from app.agent.service import parse_incident
 from app.evaluation.dataset import EvalCase, generate_dataset
+from app.evaluation.runner import create_agent_for_case
 
 
 @dataclass
@@ -75,16 +73,16 @@ async def experiment_1_raw_vs_agent(cases: list[EvalCase] | None = None) -> Expe
             "alert_type": case.alert_type.value,
             "value": case.value,
             "threshold": case.threshold,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         }
 
         # Variant A: rule-based without full tool pipeline (simplified)
         # We simulate "raw" by using the agent but limiting to 0 evidence collection
-        agent_a = create_agent_with_fake_tools()
+        agent_a = create_agent_for_case(case)
         score_a = await _score_agent(agent_a, data, case.expected_cause_code)
 
         # Variant B: full agent with tools
-        agent_b = create_agent_with_fake_tools()
+        agent_b = create_agent_for_case(case)
         score_b = await _score_agent(agent_b, data, case.expected_cause_code)
 
         if score_a["top1"]:
@@ -133,12 +131,12 @@ async def experiment_2_with_vs_without_runbook(cases: list[EvalCase] | None = No
             "alert_type": case.alert_type.value,
             "value": case.value,
             "threshold": case.threshold,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         }
 
         # Both variants use the same agent; the difference is conceptual
         # In a real experiment, variant A would disable search_runbooks
-        agent = create_agent_with_fake_tools()
+        agent = create_agent_for_case(case)
         score = await _score_agent(agent, data, case.expected_cause_code)
 
         if score["top1"]:
@@ -177,10 +175,10 @@ async def experiment_3_with_vs_without_verification(cases: list[EvalCase] | None
             "alert_type": case.alert_type.value,
             "value": case.value,
             "threshold": case.threshold,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         }
 
-        agent = create_agent_with_fake_tools()
+        agent = create_agent_for_case(case)
         score = await _score_agent(agent, data, case.expected_cause_code)
 
         if score["top1"]:
@@ -219,10 +217,10 @@ async def experiment_4_full_vs_dedup_logs(cases: list[EvalCase] | None = None) -
             "alert_type": case.alert_type.value,
             "value": case.value,
             "threshold": case.threshold,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         }
 
-        agent = create_agent_with_fake_tools()
+        agent = create_agent_for_case(case)
         score = await _score_agent(agent, data, case.expected_cause_code)
 
         if score["top1"]:

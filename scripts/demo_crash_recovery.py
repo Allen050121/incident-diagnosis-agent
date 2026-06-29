@@ -11,7 +11,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
-from datetime import datetime
+from datetime import UTC, datetime
 from app.agent.service import create_agent_with_fake_tools, parse_incident
 from app.infrastructure.checkpointer import RedisCheckpointer
 
@@ -28,7 +28,7 @@ async def demo():
         "alert_type": "P95_LATENCY_HIGH",
         "value": 5000,
         "threshold": 1000,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
     }
     incident = parse_incident(incident_data)
     print(f"\n[1] Created incident: {incident.incident_id}")

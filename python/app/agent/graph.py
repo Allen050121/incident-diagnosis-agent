@@ -10,9 +10,8 @@ Implements the pipeline:
 MVP: Rule-based (no LLM), deterministic hypothesis generation from evidence.
 """
 
-import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from typing import Optional
 
 from app.domain.incident import (
@@ -20,6 +19,7 @@ from app.domain.incident import (
     ConfidenceLevel,
     DiagnosisReport,
     Evidence,
+    EvidenceDetail,
     Hypothesis,
     Incident,
     IncidentStatus,
@@ -127,38 +127,38 @@ class DiagnosisAgent:
 
         if alert_type == AlertType.P95_LATENCY_HIGH:
             steps = [
-                PlanStep(tool="query_metrics", purpose="确认延迟发生在应用、数据库还是下游",
+                PlanStep(tool="query_metrics", purpose="Confirm where latency is elevated",
                          parameters={"metric": "latency_p95", "service": service}),
-                PlanStep(tool="query_metrics", purpose="检查数据库连接池使用率",
+                PlanStep(tool="query_metrics", purpose="Check database connection pool saturation",
                          parameters={"metric": "db_pool_active_ratio", "service": service}),
-                PlanStep(tool="query_logs", purpose="查找同一时间窗口的异常和超时",
+                PlanStep(tool="query_logs", purpose="Find errors and timeouts in the same window",
                          parameters={"service": service, "keywords": ["slow", "timeout", "error"]}),
-                PlanStep(tool="query_deployments", purpose="确认是否存在同时段发布变更",
+                PlanStep(tool="query_deployments", purpose="Check for recent deployments",
                          parameters={"service": service}),
             ]
         elif alert_type == AlertType.ERROR_RATE_HIGH:
             steps = [
-                PlanStep(tool="query_logs", purpose="查找错误日志和异常堆栈",
+                PlanStep(tool="query_logs", purpose="Find error logs and exception traces",
                          parameters={"service": service, "keywords": ["error", "exception", "fail"]}),
-                PlanStep(tool="query_metrics", purpose="检查错误率趋势",
+                PlanStep(tool="query_metrics", purpose="Check error rate trend",
                          parameters={"metric": "error_rate", "service": service}),
-                PlanStep(tool="query_deployments", purpose="确认是否有近期发布导致回归",
+                PlanStep(tool="query_deployments", purpose="Check whether a deployment caused regression",
                          parameters={"service": service}),
             ]
         elif alert_type == AlertType.THROUGHPUT_LOW:
             steps = [
-                PlanStep(tool="query_metrics", purpose="检查请求量和下游延迟",
+                PlanStep(tool="query_metrics", purpose="Check request rate and saturation",
                          parameters={"metric": "request_rate", "service": service}),
-                PlanStep(tool="query_logs", purpose="查找阻塞和超时日志",
+                PlanStep(tool="query_logs", purpose="Find blocking, rejection, and timeout logs",
                          parameters={"service": service, "keywords": ["timeout", "blocked", "reject"]}),
-                PlanStep(tool="query_metrics", purpose="检查Redis延迟",
+                PlanStep(tool="query_metrics", purpose="Check Redis latency",
                          parameters={"metric": "redis_latency_p95", "service": service}),
             ]
         else:  # MQ_LAG_HIGH
             steps = [
-                PlanStep(tool="query_metrics", purpose="检查MQ lag指标",
+                PlanStep(tool="query_metrics", purpose="Check MQ lag",
                          parameters={"metric": "mq_lag", "service": service}),
-                PlanStep(tool="query_logs", purpose="查找消费者错误",
+                PlanStep(tool="query_logs", purpose="Find consumer lag and processing errors",
                          parameters={"service": service, "keywords": ["consumer", "lag", "error"]}),
             ]
 
@@ -175,9 +175,10 @@ class DiagnosisAgent:
                 state.tool_failures.append("Budget exhausted before plan completed")
                 break
 
+            parameters = _with_incident_window(step.parameters, state.incident)
             result = await self._executor.execute(ToolInput(
                 tool=step.tool,
-                parameters=step.parameters,
+                parameters=parameters,
             ))
             state.tool_calls_used += 1
 
@@ -210,17 +211,19 @@ class DiagnosisAgent:
             return state
 
         hypotheses = []
-        alert_type = state.incident.alert_type
 
         # Rule-based hypothesis generation based on evidence patterns
         for ev in state.evidence:
             if ev.source == "query_logs":
                 logs = ev.content.get("logs", [])
-                error_stats = ev.content.get("error_stats", {})
+                messages = [log.get("message", "") for log in logs]
+                lower_messages = [message.lower() for message in messages]
 
                 # Check for slow query patterns
-                slow_query_logs = [l for l in logs if "slow" in l.get("message", "").lower()
-                                   or "SQLSlowQuery" in l.get("message", "")]
+                slow_query_logs = [
+                    message for message in messages
+                    if "slow" in message.lower() or "SQLSlowQuery" in message
+                ]
                 if slow_query_logs:
                     hypotheses.append(Hypothesis(
                         cause_code="DATABASE_SLOW_QUERY",
@@ -230,8 +233,10 @@ class DiagnosisAgent:
                     ))
 
                 # Check for connection pool issues
-                pool_logs = [l for l in logs if "pool" in l.get("message", "").lower()
-                             or "connection" in l.get("message", "").lower()]
+                pool_logs = [
+                    message for message in lower_messages
+                    if _is_db_pool_exhaustion_log(message)
+                ]
                 if pool_logs:
                     hypotheses.append(Hypothesis(
                         cause_code="DATABASE_CONNECTION_POOL_EXHAUSTED",
@@ -241,7 +246,7 @@ class DiagnosisAgent:
                     ))
 
                 # Check for Redis issues
-                redis_logs = [l for l in logs if "redis" in l.get("message", "").lower()]
+                redis_logs = [message for message in lower_messages if "redis" in message]
                 if redis_logs:
                     hypotheses.append(Hypothesis(
                         cause_code="REDIS_TIMEOUT",
@@ -251,14 +256,70 @@ class DiagnosisAgent:
                     ))
 
                 # Check for downstream failures
-                downstream_logs = [l for l in logs if "503" in l.get("message", "")
-                                   or "unavailable" in l.get("message", "").lower()]
+                downstream_logs = [
+                    message for message in lower_messages
+                    if "503" in message or "unavailable" in message or "downstream" in message
+                ]
                 if downstream_logs:
                     hypotheses.append(Hypothesis(
                         cause_code="DOWNSTREAM_SERVICE_FAILURE",
                         confidence=ConfidenceLevel.MEDIUM,
                         supporting_evidence=[ev.evidence_id],
                         reasoning_summary="Downstream service returning 503 errors",
+                    ))
+
+                resource_logs = [
+                    message for message in lower_messages
+                    if any(token in message for token in (
+                        "thread pool", "connection pool full", "rate limited",
+                        "circuit breaker", "request queued", "rejected",
+                    ))
+                    and "database" not in message
+                    and "hikaripool" not in message
+                    and "redis" not in message
+                ]
+                if resource_logs:
+                    hypotheses.append(Hypothesis(
+                        cause_code="RESOURCE_EXHAUSTION",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary="Resource saturation or resilience guardrail detected in logs",
+                    ))
+
+                mq_logs = [
+                    message for message in lower_messages
+                    if "mq" in message or "consumer lag" in message or "message backlog" in message
+                ]
+                if mq_logs:
+                    hypotheses.append(Hypothesis(
+                        cause_code="MQ_CONSUMER_ERROR",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary="Message consumer lag or processing errors detected",
+                    ))
+
+                config_logs = [
+                    message for message in lower_messages
+                    if "configuration" in message or "config" in message or "property" in message
+                ]
+                if config_logs:
+                    hypotheses.append(Hypothesis(
+                        cause_code="APPLICATION_ERROR_SPIKE",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary="Application errors point to missing or invalid configuration",
+                    ))
+
+                npe_logs = [
+                    message for message in lower_messages
+                    if "nullpointerexception" in message or " after deploying " in message
+                ]
+                if npe_logs:
+                    hypotheses.append(Hypothesis(
+                        cause_code="RECENT_DEPLOYMENT_REGRESSION",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary="New application exception pattern appears after deployment",
                     ))
 
             elif ev.source == "query_metrics":
@@ -274,12 +335,66 @@ class DiagnosisAgent:
                         supporting_evidence=[ev.evidence_id],
                         reasoning_summary=f"DB pool usage at {current:.0%}, far above baseline {baseline:.0%}",
                     ))
-                elif metric == "latency_p95" and current > baseline * 5:
+                elif (
+                    metric == "latency_p95"
+                    and state.incident.service == "order-service"
+                    and current > baseline * 5
+                ):
                     hypotheses.append(Hypothesis(
                         cause_code="DATABASE_SLOW_QUERY",
                         confidence=ConfidenceLevel.MEDIUM,
                         supporting_evidence=[ev.evidence_id],
                         reasoning_summary=f"P95 latency {current}ms is {current/baseline:.1f}x above baseline {baseline}ms",
+                    ))
+                elif (
+                    metric == "latency_p95"
+                    and "inventory" in state.incident.service
+                    and current > baseline * 5
+                ):
+                    hypotheses.append(Hypothesis(
+                        cause_code="REDIS_TIMEOUT",
+                        confidence=ConfidenceLevel.MEDIUM,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary=f"Inventory latency {current}ms suggests cache or Redis latency",
+                    ))
+                elif (
+                    metric == "latency_p95"
+                    and "payment" in state.incident.service
+                    and current > baseline * 5
+                ):
+                    hypotheses.append(Hypothesis(
+                        cause_code="DOWNSTREAM_SERVICE_FAILURE",
+                        confidence=ConfidenceLevel.MEDIUM,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary=f"Payment service latency {current}ms suggests downstream timeout",
+                    ))
+                elif metric in ("http_pool_active_ratio", "jvm_thread_pool_active_ratio") and current > 0.9:
+                    hypotheses.append(Hypothesis(
+                        cause_code="RESOURCE_EXHAUSTION",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary=f"{metric} at {current:.0%}, indicating resource saturation",
+                    ))
+                elif metric == "redis_latency_p95" and current > max(baseline * 5, 500):
+                    hypotheses.append(Hypothesis(
+                        cause_code="REDIS_TIMEOUT",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary=f"Redis P95 latency {current}ms is far above baseline {baseline}ms",
+                    ))
+                elif metric == "downstream_latency_p95" and current > max(baseline * 5, 1000):
+                    hypotheses.append(Hypothesis(
+                        cause_code="DOWNSTREAM_SERVICE_FAILURE",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary=f"Downstream P95 latency {current}ms is far above baseline {baseline}ms",
+                    ))
+                elif metric == "mq_lag" and current > max(baseline * 10, 5000):
+                    hypotheses.append(Hypothesis(
+                        cause_code="MQ_CONSUMER_ERROR",
+                        confidence=ConfidenceLevel.HIGH,
+                        supporting_evidence=[ev.evidence_id],
+                        reasoning_summary=f"MQ lag {current} messages is far above baseline {baseline}",
                     ))
                 elif metric == "error_rate" and current > 0.05:
                     hypotheses.append(Hypothesis(
@@ -294,15 +409,22 @@ class DiagnosisAgent:
                 recent = [d for d in deployments
                           if _is_recent(d.get("deployed_at", ""), hours=4)]
                 if recent:
+                    changes = recent[0].get("changes", "").lower()
+                    confidence = (
+                        ConfidenceLevel.HIGH
+                        if any(token in changes for token in ("null", "npe", "exception", "error"))
+                        else ConfidenceLevel.LOW
+                    )
                     hypotheses.append(Hypothesis(
                         cause_code="RECENT_DEPLOYMENT_REGRESSION",
-                        confidence=ConfidenceLevel.LOW,
+                        confidence=confidence,
                         supporting_evidence=[ev.evidence_id],
                         reasoning_summary=f"Recent deployment: {recent[0].get('version', 'unknown')} - {recent[0].get('changes', '')}",
                     ))
 
         # Deduplicate by cause_code, merge evidence
         merged = _merge_hypotheses(hypotheses)
+        merged = _remove_metric_contradicted_hypotheses(merged, state.evidence)
         # Sort by confidence and limit to top 3
         merged.sort(key=lambda h: _confidence_order(h.confidence))
         top3 = merged[:3]
@@ -402,6 +524,7 @@ class DiagnosisAgent:
             missing_evidence=missing,
             tool_failures=state.tool_failures,
             evidence_ids=evidence_ids,
+            evidence_details=_build_evidence_details(state.evidence),
             investigation_steps=len(state.investigation_plan.steps) if state.investigation_plan else 0,
             total_tool_calls=state.tool_calls_used,
         )
@@ -416,13 +539,22 @@ def _is_recent(deployed_at_str: str, hours: int = 4) -> bool:
     """Check if a deployment timestamp is within the given hours"""
     try:
         deployed_at = datetime.fromisoformat(deployed_at_str.replace("Z", "+00:00"))
-        now = datetime.utcnow()
-        # Handle both aware and naive datetimes
-        if deployed_at.tzinfo:
-            deployed_at = deployed_at.replace(tzinfo=None)
+        if deployed_at.tzinfo is None:
+            deployed_at = deployed_at.replace(tzinfo=UTC)
+        else:
+            deployed_at = deployed_at.astimezone(UTC)
+        now = datetime.now(UTC)
         return (now - deployed_at).total_seconds() < hours * 3600
     except (ValueError, TypeError):
         return False
+
+
+def _with_incident_window(parameters: dict, incident: Incident | None) -> dict:
+    if not incident:
+        return parameters
+    enriched = dict(parameters)
+    enriched.setdefault("start_time", incident.started_at.isoformat())
+    return enriched
 
 
 def _merge_hypotheses(hypotheses: list[Hypothesis]) -> list[Hypothesis]:
@@ -452,9 +584,48 @@ def _merge_hypotheses(hypotheses: list[Hypothesis]) -> list[Hypothesis]:
     return list(merged.values())
 
 
+def _remove_metric_contradicted_hypotheses(
+    hypotheses: list[Hypothesis],
+    evidence: list[Evidence],
+) -> list[Hypothesis]:
+    pool_metrics = [
+        item for item in evidence
+        if item.source == "query_metrics"
+        and item.content.get("metric") == "db_pool_active_ratio"
+        and item.content.get("current") is not None
+    ]
+    pool_is_low = any(float(item.content.get("current", 0)) < 0.7 for item in pool_metrics)
+    if not pool_is_low:
+        return hypotheses
+    return [
+        hypothesis for hypothesis in hypotheses
+        if hypothesis.cause_code != "DATABASE_CONNECTION_POOL_EXHAUSTED"
+    ]
+
+
 def _confidence_order(confidence: ConfidenceLevel) -> int:
     """Lower is better"""
     return {ConfidenceLevel.HIGH: 0, ConfidenceLevel.MEDIUM: 1, ConfidenceLevel.LOW: 2}.get(confidence, 3)
+
+
+def _is_db_pool_exhaustion_log(message: str) -> bool:
+    message = message.lower()
+    if any(noise in message for noise in ("hikaripool-1 - start completed", "start completed")):
+        return False
+    if any(non_db in message for non_db in ("redis", "http", "thread", "request queued", "rejected")):
+        return False
+    exhaustion_terms = (
+        "connection pool exhausted",
+        "pool exhausted",
+        "connection pool full",
+        "pool full",
+        "timeout waiting for connection",
+        "connection is not available",
+        "too many connections",
+        "unable to acquire jdbc connection",
+        "could not acquire jdbc connection",
+    )
+    return any(term in message for term in exhaustion_terms)
 
 
 def _generate_actions(hypotheses: list[Hypothesis]) -> list[str]:
@@ -488,6 +659,14 @@ def _generate_actions(hypotheses: list[Hypothesis]) -> list[str]:
         "APPLICATION_ERROR_SPIKE": [
             "Review application logs for error patterns",
             "Check resource utilization (CPU, memory, threads)",
+        ],
+        "RESOURCE_EXHAUSTION": [
+            "Check thread pools, HTTP client pools, and rate-limit/circuit-breaker settings",
+            "Reduce saturation or raise pool limits after validating traffic demand",
+        ],
+        "MQ_CONSUMER_ERROR": [
+            "Check consumer error logs and message backlog",
+            "Scale consumers or inspect poison messages blocking progress",
         ],
     }
 
@@ -523,3 +702,57 @@ def _identify_missing_evidence(hypotheses: list[Hypothesis], evidence: list[Evid
         missing.append("Database performance metrics (pool usage, query latency)")
 
     return missing
+
+
+def _build_evidence_details(evidence: list[Evidence]) -> list[EvidenceDetail]:
+    return [
+        EvidenceDetail(
+            evidence_id=item.evidence_id,
+            source=item.source,
+            summary=_summarize_evidence(item),
+            query_window=item.query_window,
+            truncated=item.truncated,
+            content=item.content,
+        )
+        for item in evidence
+    ]
+
+
+def _summarize_evidence(evidence: Evidence) -> str:
+    content = evidence.content
+    if evidence.source == "query_logs":
+        logs = content.get("logs", [])
+        stats = content.get("error_stats", {})
+        if not logs:
+            warning = content.get("warning", "No matching logs found")
+            return f"Logs: {warning}"
+        messages = [log.get("message", "") for log in logs[:2]]
+        return f"Logs: {len(logs)} entries, levels={stats}, sample={' | '.join(messages)}"
+
+    if evidence.source == "query_metrics":
+        metric = content.get("metric", "unknown")
+        current = content.get("current", "n/a")
+        baseline = content.get("baseline", "n/a")
+        unit = content.get("unit", "")
+        source = content.get("source", "metrics")
+        return f"Metric {metric}: current={current}{unit}, baseline={baseline}{unit}, source={source}"
+
+    if evidence.source == "query_deployments":
+        deployments = content.get("deployments", [])
+        if not deployments:
+            return "Deployments: no recent deployments"
+        first = deployments[0]
+        return (
+            "Deployments: "
+            f"{len(deployments)} records, latest={first.get('version', 'unknown')} "
+            f"{first.get('changes', '')}"
+        )
+
+    if evidence.source == "search_runbooks":
+        runbooks = content.get("runbooks", [])
+        if not runbooks:
+            return "Runbooks: no matches"
+        titles = [item.get("title", "untitled") for item in runbooks[:2]]
+        return f"Runbooks: {len(runbooks)} matches, top={'; '.join(titles)}"
+
+    return f"{evidence.source}: {str(content)[:200]}"

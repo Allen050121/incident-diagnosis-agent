@@ -1,7 +1,7 @@
 """Tool executor - unified execution pipeline for all diagnosis tools"""
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from app.infrastructure.tool_definitions import ToolInput, ToolResult, validate_tool_input
@@ -82,7 +82,7 @@ class ToolExecutor:
 
         # 4. Build result with evidence ID
         evidence_id = self._generate_evidence_id(tool_input.evidence_id_prefix, tool_input.tool)
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         query_window = {
             "from": tool_input.parameters.get("start_time", (now - timedelta(minutes=15)).isoformat()),
             "to": tool_input.parameters.get("end_time", now.isoformat()),

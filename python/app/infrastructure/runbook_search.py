@@ -9,7 +9,6 @@ Implements:
 import math
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Optional
 
 from app.infrastructure.runbook_store import Runbook, RunbookStore
 

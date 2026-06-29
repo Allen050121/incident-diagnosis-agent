@@ -12,6 +12,12 @@ Your job:
 Rules:
 - Always ground your reasoning in the provided evidence.
 - Each hypothesis MUST reference specific evidence IDs.
+- For demo or fault-lab evidence, FaultInjector log lines describe how the
+  incident was triggered; do not treat FaultInjector itself as the production
+  root cause unless metrics and logs rule out the underlying scenario.
+- When P95 latency is far above baseline and slow-query or database-related
+  evidence is present, prefer DATABASE_SLOW_QUERY or
+  DATABASE_CONNECTION_POOL_EXHAUSTED over generic APPLICATION_ERROR_SPIKE.
 - Use cause_code identifiers from this list when applicable:
   DATABASE_SLOW_QUERY, DATABASE_CONNECTION_POOL_EXHAUSTED, REDIS_TIMEOUT,
   DOWNSTREAM_SERVICE_FAILURE, RECENT_DEPLOYMENT_REGRESSION, APPLICATION_ERROR_SPIKE,

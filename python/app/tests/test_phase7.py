@@ -1,21 +1,17 @@
 """Tests for Phase 7+ deliverables: evaluation dataset, desensitizer, agent trace, experiments."""
 
-import asyncio
-import json
-import re
-from datetime import datetime
 
 import pytest
 
 from app.domain.incident import AlertType
-from app.evaluation.dataset import EvalCase, generate_dataset, dataset_summary
-from app.evaluation.runner import score_report, compute_metrics
+from app.evaluation.dataset import generate_dataset, dataset_summary
+from app.evaluation.runner import score_report, compute_metrics, run_evaluation
 from app.evaluation.experiments import run_all_experiments
 from app.infrastructure.log_desensitizer import (
     desensitize, desensitize_log_entry, desensitize_logs,
 )
 from app.infrastructure.agent_trace import (
-    AgentTrace, TraceRecorder, TraceSpan, recorder,
+    TraceRecorder,
 )
 from app.domain.incident import (
     ConfidenceLevel, DiagnosisReport, Hypothesis,
@@ -161,14 +157,6 @@ def test_score_report_none():
 
 def test_compute_metrics_structure():
     """Metrics have expected structure."""
-    report = DiagnosisReport(
-        incident_id="INC-001", status="DIAGNOSED",
-        top_causes=[Hypothesis(cause_code="DATABASE_SLOW_QUERY",
-                               confidence=ConfidenceLevel.HIGH, rank=1)],
-        evidence_ids=["ev-1"],
-    )
-    results = [score_report(report, "DATABASE_SLOW_QUERY", [])]
-
     from app.evaluation.runner import ScoringResult
     scoring = ScoringResult(
         case_id="EVAL-001", fault_id="mysql-slow-query",
@@ -181,6 +169,21 @@ def test_compute_metrics_structure():
     assert metrics["total_cases"] == 1
     assert "rule_based" in metrics
     assert metrics["rule_based"]["top1_accuracy"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_evaluation_runner_uses_case_specific_evidence():
+    """Evaluation must not score every fault against the same fake MySQL evidence."""
+    results = await run_evaluation()
+    metrics = compute_metrics(results)["rule_based"]
+
+    assert metrics["top1_accuracy"] >= 0.9
+    assert metrics["forbidden_violation_rate"] == 0.0
+
+    by_case = {result.fault_id: result for result in results}
+    assert by_case["redis-timeout"].rb_cause_codes[0] == "REDIS_TIMEOUT"
+    assert by_case["downstream-payment-timeout"].rb_cause_codes[0] == "DOWNSTREAM_SERVICE_FAILURE"
+    assert by_case["mq-consumer-lag"].rb_cause_codes[0] == "MQ_CONSUMER_ERROR"
 
 
 # === Log Desensitization Tests ===

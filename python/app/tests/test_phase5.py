@@ -9,12 +9,11 @@ Tests cover:
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 
 from app.agent.service import parse_incident
-from app.domain.incident import AlertType, Incident
 from app.infrastructure.checkpointer import (
     InMemoryCheckpointer,
     get_nodes_to_resume,
@@ -193,7 +192,7 @@ async def test_worker_process_task():
             "alert_type": "P95_LATENCY_HIGH",
             "value": 1800.0,
             "threshold": 500.0,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         },
     )
 
@@ -209,7 +208,6 @@ async def test_worker_process_task():
 @pytest.mark.asyncio
 async def test_worker_cancelled_task():
     queue = InMemoryTaskQueue()
-    worker = DiagnosisWorker(task_queue=queue)
 
     task = TaskMessage(
         task_id="D-031",
@@ -220,14 +218,14 @@ async def test_worker_cancelled_task():
             "alert_type": "P95_LATENCY_HIGH",
             "value": 100.0,
             "threshold": 50.0,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         },
     )
     queue.publish(task)
     queue.cancel("D-031")
 
     # Claim should skip cancelled tasks
-    claimed = queue.claim("worker-1")
+    queue.claim("worker-1")
     # The task is still claimed from queue but marked cancelled
     assert queue.is_cancelled("D-031")
 

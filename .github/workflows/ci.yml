@@ -23,7 +23,7 @@ jobs:
       - name: Run tests
         run: python -m pytest app/tests/ -v --tb=short
       - name: Lint check
-        run: python -m ruff check app/ || true
+        run: python -m ruff check app/
 
   java-build:
     name: Java Build & Test

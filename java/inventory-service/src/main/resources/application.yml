@@ -29,3 +29,9 @@ management:
 
 fault:
   enabled: true
+
+logging:
+  file:
+    name: ${LOG_DIR:D:/yangjw/workspace/incident-diagnosis-agent/logs}/inventory-service.log
+  level:
+    com.example.incident: DEBUG

@@ -9,12 +9,10 @@ Tests cover:
   - Expired runbook exclusion
 """
 
-import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.agent.graph import DiagnosisAgent
 from app.agent.service import create_agent_with_fake_tools
 from app.domain.incident import AlertType, ConfidenceLevel, Evidence, Hypothesis, Incident
 from app.infrastructure.evidence_governance import (
@@ -31,7 +29,7 @@ from app.infrastructure.log_processor import (
     process_logs,
     trim_logs,
 )
-from app.infrastructure.runbook_search import BM25Search, evaluate_mrr, evaluate_recall_at_k
+from app.infrastructure.runbook_search import BM25Search, evaluate_mrr
 from app.infrastructure.runbook_store import (
     Runbook,
     RunbookStatus,
@@ -160,7 +158,7 @@ def test_expired_runbook_not_usable_as_evidence():
         runbook_id="RB-EXPIRED",
         title="Expired Runbook",
         service="test",
-        effective_to=datetime.utcnow() - timedelta(days=1),
+        effective_to=datetime.now(UTC) - timedelta(days=1),
     )
     is_valid, reason = validate_runbook_as_evidence(rb)
     assert not is_valid
@@ -286,7 +284,7 @@ async def test_inconclusive_when_no_evidence():
         alert_type=AlertType.MQ_LAG_HIGH,
         value=100.0,
         threshold=10.0,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     report = await agent.diagnose(incident)
     # Status should be DIAGNOSED or INCONCLUSIVE (with the fake tools, still gets some data)

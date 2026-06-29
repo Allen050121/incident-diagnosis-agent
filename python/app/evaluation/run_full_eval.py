@@ -9,8 +9,7 @@ and outputs a structured report.
 
 import asyncio
 import json
-import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 async def main():
@@ -43,7 +42,7 @@ async def main():
     print(f"  Inconclusive Rate:         {rb.get('inconclusive_rate', 0):.1%}")
 
     # 3. Controlled experiments
-    print(f"\n[3/3] Running 4 controlled experiments...")
+    print("\n[3/3] Running 4 controlled experiments...")
     experiments = await run_all_experiments()
     for exp in experiments:
         print(f"  [{exp.experiment_name}]")
@@ -51,7 +50,7 @@ async def main():
 
     # Save full report
     report = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "dataset": summary,
         "metrics": metrics,
         "experiments": [

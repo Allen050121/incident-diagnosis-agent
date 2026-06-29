@@ -1,7 +1,5 @@
-version: '3.8'
-
 services:
-  # MySQL 数据库
+  # MySQL database
   mysql:
     image: mysql:8.0
     container_name: incident-mysql
@@ -23,7 +21,7 @@ services:
     networks:
       - incident-network
 
-  # Redis
+  # Redis cache and task queue
   redis:
     image: redis:7-alpine
     container_name: incident-redis
@@ -39,22 +37,22 @@ services:
     networks:
       - incident-network
 
-  # Prometheus (指标存储)
+  # Prometheus metrics store
   prometheus:
     image: prom/prometheus:v2.48.0
     container_name: incident-prometheus
     ports:
       - "9090:9090"
     volumes:
-      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
     networks:
       - incident-network
 
-  # Grafana (指标可视化)
+  # Grafana dashboards
   grafana:
     image: grafana/grafana:10.2.0
     container_name: incident-grafana
@@ -69,7 +67,7 @@ services:
     networks:
       - incident-network
 
-  # Loki (日志存储)
+  # Loki log store
   loki:
     image: grafana/loki:2.9.0
     container_name: incident-loki
@@ -81,7 +79,7 @@ services:
     networks:
       - incident-network
 
-  # Elasticsearch (备选日志存储,用于Runbook RAG)
+  # Elasticsearch for runbook RAG
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     container_name: incident-elasticsearch
@@ -96,7 +94,7 @@ services:
     networks:
       - incident-network
 
-  # RocketMQ (可选,用于消息积压故障)
+  # RocketMQ for optional MQ lag fault scenarios
   namesrv:
     image: apache/rocketmq:5.1.4
     container_name: incident-rocketmq-namesrv

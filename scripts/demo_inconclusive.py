@@ -12,7 +12,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'python'))
 
-from datetime import datetime
+from datetime import UTC, datetime
 from app.agent.graph import DiagnosisAgent, AgentState
 from app.agent.service import parse_incident
 from app.domain.incident import (
@@ -41,7 +41,7 @@ async def demo():
         "alert_type": "ERROR_RATE_HIGH",
         "value": 0.15,
         "threshold": 0.05,
-        "started_at": datetime.utcnow().isoformat(),
+        "started_at": datetime.now(UTC).isoformat(),
     }
     incident = parse_incident(incident_data)
     print(f"\n[1] Created incident: {incident.incident_id}")

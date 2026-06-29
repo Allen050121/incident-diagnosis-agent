@@ -5,7 +5,6 @@ Each case has a known root_cause for scoring.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from typing import Optional
 
 from app.domain.incident import AlertType

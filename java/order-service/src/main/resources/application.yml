@@ -28,6 +28,8 @@ management:
         enabled: true
 
 logging:
+  file:
+    name: ${LOG_DIR:D:/yangjw/workspace/incident-diagnosis-agent/logs}/order-service.log
   level:
     com.example.incident: DEBUG
 

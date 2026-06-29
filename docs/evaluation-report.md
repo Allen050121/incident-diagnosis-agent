@@ -1,130 +1,83 @@
-# Evaluation Report: LLM vs Rule-Based Diagnosis
+# Evaluation Report: Incident Diagnosis Pipeline
 
 ## Overview
 
-This report compares the rule-based diagnosis agent (Phase 3) with the LLM-powered agent (Phase 6) using DeepSeek V4 Flash.
+This report records the reproducible evaluation for the diagnosis pipeline. The default evaluation command runs the deterministic rule-based agent over 48 labeled cases. LLM integration is available as a primary runtime path with rule-based fallback, but live LLM scores depend on API availability and are not used as the default CI-quality gate.
 
 **Test date:** 2026-06-29
-**LLM Model:** deepseek-v4-flash
-**Test scenarios:** 4 alert types x 3 fault scenarios = 12 evaluation cases
-
----
+**LLM model:** deepseek-v4-flash
+**Test scenarios:** 12 fault templates x 4 variants = 48 evaluation cases
+**Command:** `cd python && python -m app.evaluation.run_full_eval`
 
 ## Architecture Comparison
 
-| Aspect | Rule-Based (Phase 3-5) | LLM-Powered (Phase 6) |
+| Aspect | Rule-Based Baseline | LLM-Powered Runtime |
 |---|---|---|
-| Plan Creation | Hardcoded per alert type | LLM generates dynamically |
-| Hypothesis Generation | Keyword pattern matching | Semantic evidence analysis |
-| Report Generation | Template-based actions | Contextual recommendations |
+| Plan creation | Deterministic per alert type | LLM generates dynamically |
+| Evidence collection | Controlled tools | Controlled tools |
+| Hypothesis generation | Evidence pattern matching | Semantic evidence analysis |
+| Report generation | Template-based actions | Contextual recommendations |
 | Fallback | N/A | Auto-fallback to rule-based |
-| Token Cost | 0 | ~150-500 tokens per diagnosis |
-| Latency | <100ms | 1-5s (network + inference) |
+| Token cost | 0 | Estimated ~900 tokens per diagnosis |
+| Latency | Near-zero in fake-tool evaluation | Estimated 1-5s network + inference |
 
----
+## Scenario Coverage
 
-## Token Usage Analysis
-
-### Per-Diagnosis Token Breakdown (Estimated)
-
-| Step | Prompt Tokens | Completion Tokens | Reasoning Tokens | Total |
-|---|---|---|---|---|
-| Plan Creation | ~100 | ~50 | ~20 | ~170 |
-| Hypothesis Generation | ~200 | ~150 | ~80 | ~430 |
-| Report Generation | ~150 | ~100 | ~50 | ~300 |
-| **Total per diagnosis** | **~450** | **~300** | **~150** | **~900** |
-
-### Cost Estimation (DeepSeek V4 Flash Pricing)
-
-| Metric | Value |
-|---|---|
-| Input price | $0.27 / 1M tokens |
-| Output price | $1.10 / 1M tokens |
-| Cost per diagnosis | ~$0.0005 |
-| Cost per 1000 diagnoses | ~$0.50 |
-| Monthly cost (10K/day) | ~$15 |
-
----
-
-## Diagnosis Quality
-
-### Scenario Coverage
-
-| Scenario | Rule-Based | LLM-Powered | Match |
-|---|---|---|---|
-| MySQL Slow Query | DATABASE_SLOW_QUERY (HIGH) | DATABASE_SLOW_QUERY (HIGH) | YES |
-| Connection Pool | DB_POOL_EXHAUSTED (HIGH) | DB_POOL_EXHAUSTED (HIGH) | YES |
-| Redis Timeout | REDIS_TIMEOUT (MEDIUM) | REDIS_TIMEOUT (HIGH) | YES |
-| Downstream 503 | DOWNSTREAM_FAILURE (MEDIUM) | DOWNSTREAM_FAILURE (HIGH) | YES |
-| Recent Deploy | DEPLOY_REGRESSION (LOW) | DEPLOY_REGRESSION (MEDIUM) | YES |
-
-### Quality Observations
-
-1. **LLM produces higher confidence** when evidence is clear: LLM assigns HIGH confidence to patterns that rule-based only rates MEDIUM.
-
-2. **LLM generates better reasoning summaries**: Instead of template text, LLM produces contextual explanations referencing specific evidence.
-
-3. **LLM provides richer recommended actions**: Rule-based maps cause_code -> fixed action list. LLM generates actions specific to the incident context.
-
-4. **Both agree on root cause identification**: In all test scenarios, both approaches identify the same top cause_code.
-
----
+| Scenario | Expected Cause Code | Rule-Based Result |
+|---|---|---|
+| MySQL slow query | DATABASE_SLOW_QUERY | Pass |
+| MySQL connection pool exhausted | DATABASE_CONNECTION_POOL_EXHAUSTED | Pass |
+| Redis timeout | REDIS_TIMEOUT | Pass |
+| Redis hot key | REDIS_TIMEOUT | Pass |
+| Downstream payment timeout | DOWNSTREAM_SERVICE_FAILURE | Pass |
+| Downstream payment 5xx | DOWNSTREAM_SERVICE_FAILURE | Pass |
+| HTTP connection pool exhausted | RESOURCE_EXHAUSTION | Pass |
+| Thread pool full | RESOURCE_EXHAUSTION | Pass |
+| Configuration error | APPLICATION_ERROR_SPIKE | Pass |
+| Deployment NPE | RECENT_DEPLOYMENT_REGRESSION | Pass |
+| Rate limit / circuit breaker | RESOURCE_EXHAUSTION | Pass |
+| MQ consumer lag | MQ_CONSUMER_ERROR | Pass |
 
 ## Evaluation Metrics
 
-| Metric | Rule-Based | LLM | Notes |
-|---|---|---|---|
-| Root Cause Top-1 Accuracy | 83% | 92% | LLM better at ambiguous evidence |
-| Root Cause Top-3 Recall | 100% | 100% | Both cover all correct causes |
-| Evidence Precision | 75% | 88% | LLM references evidence more accurately |
-| Avg Latency | ~50ms | ~2500ms | LLM is 50x slower |
-| Cost per Diagnosis | $0 | ~$0.0005 | LLM has marginal cost |
-| Token Efficiency | N/A | ~900 tokens/diag | Reasonable for DeepSeek V4 Flash |
+| Metric | Rule-Based Baseline | Notes |
+|---|---:|---|
+| Total cases | 48 | 12 faults x 4 variants |
+| Root cause Top-1 accuracy | 100.0% | 48/48 |
+| Root cause Top-3 recall | 100.0% | 48/48 |
+| Forbidden violation rate | 0.0% | No forbidden root cause appears |
+| Inconclusive rate | 0.0% | All cases diagnosed |
+| Diagnosed rate | 100.0% | All cases reached DIAGNOSED |
+| Average latency | ~0.1ms | Local deterministic fake-tool evaluation |
 
----
+## Controlled Experiments
 
-## Latency Breakdown
+| Experiment | Result |
+|---|---|
+| Raw/no-tools vs agent with tools | Agent with tools: Top-1 12/12; raw baseline: Top-1 12/12 in the deterministic simulation |
+| With vs without runbook | With runbook: Top-1 12/12; without runbook: Top-1 11/12 |
+| With vs without verification | With verification: Top-1 12/12; without verification: Top-1 11/12 |
+| Full logs vs deduplicated logs | Same Top-1 result; deduplicated logs reduce processing cost and latency |
 
-```
-Rule-Based Pipeline:
-  Plan:       2ms
-  Evidence:  30ms (4 tool calls)
-  Hypotheses: 5ms
-  Report:     3ms
-  ─────────────
-  Total:     ~40-50ms
+## Quality Observations
 
-LLM-Powered Pipeline:
-  LLM Plan:       800ms (1 LLM call)
-  Evidence:       30ms (4 tool calls)
-  LLM Hypotheses: 1200ms (1 LLM call)
-  Validation:      2ms
-  LLM Report:     500ms (1 LLM call)
-  ─────────────
-  Total:     ~2500-3000ms
-```
-
----
+1. Case-specific evidence is required. The evaluation runner now injects fault-specific logs, metrics, deployment records, and runbooks for each case instead of scoring every case against the same MySQL evidence.
+2. The deterministic rule-based pipeline is a stable CI-quality baseline for the fixed 12-fault MVP scope.
+3. LLM-powered diagnosis remains useful for richer explanations and recommendations, but should be evaluated separately when live API access is available.
+4. Forbidden conclusions are explicitly checked so symptom/root-cause confusion is visible in metrics.
 
 ## Fallback Behavior
 
-When the LLM API is unavailable (empty API key or network error):
+When the LLM API is unavailable, such as an empty API key or network error:
 
-1. `LLMDiagnosisAgent.diagnose()` checks `llm_client.is_available`
-2. If unavailable, delegates to `rule_based_fallback` (standard `DiagnosisAgent`)
-3. Produces identical results to pure rule-based pipeline
-4. All 71 tests pass in both modes
-
----
+1. `LLMDiagnosisAgent.diagnose()` checks `llm_client.is_available`.
+2. If unavailable, it delegates to the rule-based fallback.
+3. The fallback produces the deterministic baseline result.
+4. The full Python test suite passes with 102 tests.
 
 ## Conclusions
 
-1. **LLM integration improves diagnosis quality** without sacrificing correctness. The LLM agent achieves higher confidence levels and more contextual reasoning.
-
-2. **Cost is negligible** at DeepSeek V4 Flash pricing (~$0.0005/diagnosis).
-
-3. **Latency is acceptable** for incident diagnosis workflows (seconds, not milliseconds).
-
-4. **Fallback ensures reliability**: System degrades gracefully to rule-based when LLM is unavailable.
-
-5. **Recommendation**: Use LLM-powered agent as primary, with rule-based as automatic fallback.
+1. The deterministic baseline now passes the full labeled evaluation: 48/48 Top-1, 48/48 Top-3, and 0 forbidden violations.
+2. Cost is zero for the rule-based baseline and estimated at about $0.0005 per LLM diagnosis.
+3. LLM latency is acceptable for incident diagnosis workflows, where seconds are usually tolerable.
+4. Keep the rule-based pipeline as the CI-quality baseline and use LLM-powered diagnosis as the richer runtime path with automatic fallback.

@@ -4,10 +4,9 @@ Records every step of the diagnosis pipeline with timing, token usage,
 and evidence references for debugging and replay.
 """
 
-import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 
@@ -51,7 +50,7 @@ class AgentTrace:
             incident_id=self.incident_id,
             operation=operation,
             name=name,
-            started_at=datetime.utcnow().isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
             attributes=attributes or {},
             status=status,
             error=error,
@@ -60,7 +59,7 @@ class AgentTrace:
         return span
 
     def finish_span(self, span: TraceSpan) -> None:
-        span.finished_at = datetime.utcnow().isoformat()
+        span.finished_at = datetime.now(UTC).isoformat()
         started = datetime.fromisoformat(span.started_at)
         finished = datetime.fromisoformat(span.finished_at)
         span.duration_ms = (finished - started).total_seconds() * 1000
@@ -91,13 +90,13 @@ class TraceRecorder:
             trace_id=uuid.uuid4().hex[:16],
             incident_id=incident_id,
             diagnosis_task_id=task_id or uuid.uuid4().hex[:8],
-            started_at=datetime.utcnow().isoformat(),
+            started_at=datetime.now(UTC).isoformat(),
         )
         self._traces[trace.trace_id] = trace
         return trace
 
     def finish_trace(self, trace: AgentTrace, status: str = "") -> None:
-        trace.finished_at = datetime.utcnow().isoformat()
+        trace.finished_at = datetime.now(UTC).isoformat()
         trace.final_status = status
         started = datetime.fromisoformat(trace.started_at)
         finished = datetime.fromisoformat(trace.finished_at)

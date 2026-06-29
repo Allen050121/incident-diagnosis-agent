@@ -1,7 +1,7 @@
 """Tool definitions for the diagnosis agent"""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 
@@ -39,7 +39,7 @@ class ToolResult:
     error: Optional[str] = None
     truncated: bool = False
     query_window: Optional[dict] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 def validate_tool_input(tool_input: ToolInput) -> Optional[str]:

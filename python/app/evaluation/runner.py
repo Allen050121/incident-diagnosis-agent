@@ -4,19 +4,33 @@ Runs the full evaluation dataset against both rule-based and LLM agents,
 computes metrics, and outputs a structured report.
 """
 
-import asyncio
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from app.agent.graph import DiagnosisAgent
-from app.agent.llm_graph import LLMDiagnosisAgent
 from app.agent.service import parse_incident
-from app.domain.incident import DiagnosisReport, Incident
-from app.evaluation.comparator import evaluate_single, summarize
+from app.domain.incident import DiagnosisReport
 from app.evaluation.dataset import EvalCase, generate_dataset
+from app.infrastructure.fake_tools import (
+    FakeDeploymentProvider,
+    FakeLogProvider,
+    FakeMetricsProvider,
+    FakeRunbookProvider,
+)
+from app.infrastructure.tool_executor import ToolExecutor
+
+
+class UnavailableProvider:
+    """Tool provider that simulates a controlled tool outage."""
+
+    def __init__(self, tool_name: str):
+        self.tool_name = tool_name
+
+    async def execute(self, parameters: dict) -> dict:
+        raise RuntimeError(f"{self.tool_name} unavailable for evaluation case")
 
 
 @dataclass
@@ -80,6 +94,35 @@ def score_report(report: Optional[DiagnosisReport], expected_cause_code: str,
     }
 
 
+def create_agent_for_case(case: EvalCase) -> DiagnosisAgent:
+    """Create a deterministic evaluation agent whose tools reflect one fault case."""
+    executor = ToolExecutor()
+    scenario = case.fault_id
+
+    providers = {
+        "query_logs": FakeLogProvider(scenario=scenario),
+        "query_metrics": FakeMetricsProvider(scenario=scenario),
+        "query_deployments": FakeDeploymentProvider(
+            scenario="deployment-npe" if case.fault_id == "deployment-npe" else "default"
+        ),
+        "search_runbooks": FakeRunbookProvider(scenario=scenario),
+    }
+
+    if case.has_unrelated_deploy and case.fault_id != "deployment-npe":
+        providers["query_deployments"] = FakeDeploymentProvider(scenario="recent_deploy")
+
+    if case.has_wrong_runbook:
+        providers["search_runbooks"] = FakeRunbookProvider(scenario="default")
+
+    if case.tool_unavailable:
+        providers[case.tool_unavailable] = UnavailableProvider(case.tool_unavailable)
+
+    for tool_name, provider in providers.items():
+        executor.register(tool_name, provider)
+
+    return DiagnosisAgent(tool_executor=executor, max_tool_calls=10)
+
+
 async def run_evaluation(use_llm: bool = False) -> list[ScoringResult]:
     """Run the full evaluation pipeline."""
     cases = generate_dataset()
@@ -92,13 +135,12 @@ async def run_evaluation(use_llm: bool = False) -> list[ScoringResult]:
             "alert_type": case.alert_type.value,
             "value": case.value,
             "threshold": case.threshold,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
         }
         incident = parse_incident(incident_data)
 
-        # Score rule-based
-        from app.agent.service import create_agent_with_fake_tools
-        rb_agent = create_agent_with_fake_tools()
+        # Score rule-based with case-specific deterministic tool evidence.
+        rb_agent = create_agent_for_case(case)
         start = time.monotonic()
         rb_report = await rb_agent.diagnose(incident)
         rb_latency = (time.monotonic() - start) * 1000
@@ -248,7 +290,7 @@ async def run_and_report(use_llm: bool = False, output_path: str = "eval_results
     metrics = compute_metrics(results)
 
     report = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "metrics": metrics,
         "results": [asdict(r) for r in results],
     }

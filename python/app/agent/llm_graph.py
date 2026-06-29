@@ -10,10 +10,9 @@ Pipeline:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Optional
 
-from app.agent.graph import DiagnosisAgent
+from app.agent.graph import DiagnosisAgent, _build_evidence_details
 from app.domain.incident import (
     AlertType,
     ConfidenceLevel,
@@ -155,7 +154,7 @@ class LLMDiagnosisAgent:
         else:
             items = []
 
-        for item in items[:4]:  # Max 4 steps
+        for item in items[:4]:  # Keep the LLM plan compact, then add guardrail steps below.
             tool = item.get("tool", "")
             if tool in ("query_logs", "query_metrics", "query_deployments", "search_runbooks"):
                 steps.append(PlanStep(
@@ -168,6 +167,9 @@ class LLMDiagnosisAgent:
         if not steps:
             steps = _rule_based_plan(incident)
             state.llm_reasoning_log.append("plan: used rule-based fallback")
+
+        steps = _merge_required_steps(steps, _rule_based_plan(incident), state.max_tool_calls)
+        state.llm_reasoning_log.append(f"plan: evidence guardrail kept {len(steps)} steps")
 
         state.investigation_plan = InvestigationPlan(steps=steps)
         return state
@@ -182,9 +184,10 @@ class LLMDiagnosisAgent:
                 state.tool_failures.append("Budget exhausted before plan completed")
                 break
 
+            parameters = _with_incident_window(step.parameters, state.incident)
             result = await self._executor.execute(ToolInput(
                 tool=step.tool,
-                parameters=step.parameters,
+                parameters=parameters,
             ))
             state.tool_calls_used += 1
 
@@ -264,10 +267,19 @@ class LLMDiagnosisAgent:
                 reasoning_summary=reasoning,
             ))
 
-        # Fallback to rule-based if LLM returned no hypotheses
+        guardrail_hypotheses = _rule_based_hypotheses(state.incident, state.evidence)
+
+        # Fallback to rule-based if LLM returned no hypotheses. Otherwise merge the
+        # LLM's judgement with deterministic evidence guardrails so an LLM cannot
+        # miss obvious root-cause evidence collected by mandatory tool calls.
         if not hypotheses:
-            hypotheses = _rule_based_hypotheses(state.incident, state.evidence)
+            hypotheses = _merge_hypotheses(guardrail_hypotheses)
             state.llm_reasoning_log.append("hypotheses: used rule-based fallback")
+        else:
+            hypotheses = _merge_hypotheses(guardrail_hypotheses + hypotheses)
+            state.llm_reasoning_log.append("hypotheses: merged LLM output with evidence guardrails")
+
+        hypotheses = _remove_metric_contradicted_hypotheses(hypotheses, state.evidence)
 
         # Rank
         for i, h in enumerate(hypotheses):
@@ -334,23 +346,25 @@ class LLMDiagnosisAgent:
         traceability = validate_evidence_traceability(state.hypotheses, state.evidence)
         status = determine_diagnosis_status(state.hypotheses, traceability)
 
-        # Override status with LLM suggestion if available
+        # Override status with LLM suggestion if available, but never allow the LLM
+        # to downgrade a high-confidence, evidence-backed diagnosis.
         if isinstance(result, dict):
             llm_status = result.get("status", "")
             if llm_status in ("DIAGNOSED", "INCONCLUSIVE", "FAILED"):
-                status = llm_status
+                has_high_confidence_evidence = any(
+                    h.confidence == ConfidenceLevel.HIGH and h.supporting_evidence
+                    for h in state.hypotheses
+                )
+                if not (status == "DIAGNOSED" and llm_status != "DIAGNOSED" and has_high_confidence_evidence):
+                    status = llm_status
 
         actions = []
         missing = []
-        summary = ""
         if isinstance(result, dict):
             actions = result.get("recommended_actions", [])
             missing = result.get("missing_evidence", [])
-            summary = result.get("summary", "")
 
-        # Fallback actions
-        if not actions:
-            actions = _rule_based_actions(state.hypotheses)
+        actions = _merge_actions(_rule_based_actions(state.hypotheses), actions, state.hypotheses)
 
         state.final_report = DiagnosisReport(
             incident_id=state.incident.incident_id,
@@ -360,6 +374,7 @@ class LLMDiagnosisAgent:
             missing_evidence=missing,
             tool_failures=state.tool_failures,
             evidence_ids=evidence_ids,
+            evidence_details=_build_evidence_details(state.evidence),
             investigation_steps=len(state.investigation_plan.steps) if state.investigation_plan else 0,
             total_tool_calls=state.tool_calls_used,
         )
@@ -418,13 +433,13 @@ def _rule_based_hypotheses(incident: Incident, evidence: list[Evidence]) -> list
     for ev in evidence:
         if ev.source == "query_logs":
             logs = ev.content.get("logs", [])
-            if any("slow" in l.get("message", "").lower() for l in logs):
+            if any("slow" in log.get("message", "").lower() for log in logs):
                 hypotheses.append(Hypothesis(
                     cause_code="DATABASE_SLOW_QUERY", confidence=ConfidenceLevel.HIGH,
                     supporting_evidence=[ev.evidence_id],
                     reasoning_summary="Slow query patterns detected in logs",
                 ))
-            if any("pool" in l.get("message", "").lower() for l in logs):
+            if any(_is_db_pool_exhaustion_log(log.get("message", "")) for log in logs):
                 hypotheses.append(Hypothesis(
                     cause_code="DATABASE_CONNECTION_POOL_EXHAUSTED",
                     confidence=ConfidenceLevel.HIGH,
@@ -442,6 +457,20 @@ def _rule_based_hypotheses(incident: Incident, evidence: list[Evidence]) -> list
                     supporting_evidence=[ev.evidence_id],
                     reasoning_summary=f"DB pool at {current:.0%}",
                 ))
+            elif (
+                metric == "latency_p95"
+                and baseline
+                and current > max(baseline * 5, incident.threshold)
+            ):
+                hypotheses.append(Hypothesis(
+                    cause_code="DATABASE_SLOW_QUERY",
+                    confidence=ConfidenceLevel.HIGH,
+                    supporting_evidence=[ev.evidence_id],
+                    reasoning_summary=(
+                        f"P95 latency {current}ms is {current / baseline:.1f}x "
+                        f"above baseline {baseline}ms"
+                    ),
+                ))
     if not hypotheses:
         hypotheses.append(Hypothesis(
             cause_code="UNKNOWN", confidence=ConfidenceLevel.LOW,
@@ -450,11 +479,189 @@ def _rule_based_hypotheses(incident: Incident, evidence: list[Evidence]) -> list
     return hypotheses[:3]
 
 
+def _with_incident_window(parameters: dict, incident: Incident | None) -> dict:
+    if not incident:
+        return parameters
+    enriched = dict(parameters)
+    enriched.setdefault("start_time", incident.started_at.isoformat())
+    return enriched
+
+
+def _step_key(step: PlanStep) -> tuple:
+    normalized_params = []
+    for key, value in sorted(step.parameters.items()):
+        if isinstance(value, list):
+            normalized_params.append((key, tuple(sorted(str(item) for item in value))))
+        else:
+            normalized_params.append((key, str(value)))
+    return step.tool, tuple(normalized_params)
+
+
+def _merge_required_steps(
+    llm_steps: list[PlanStep],
+    required_steps: list[PlanStep],
+    max_tool_calls: int,
+) -> list[PlanStep]:
+    """Merge LLM-selected steps with required evidence collection steps."""
+    merged = []
+    seen = set()
+    for step in required_steps + llm_steps:
+        key = _semantic_step_key(step)
+        if key in seen:
+            continue
+        if len(merged) >= max_tool_calls:
+            break
+        merged.append(step)
+        seen.add(key)
+    return merged
+
+
+def _semantic_step_key(step: PlanStep) -> tuple:
+    service = step.parameters.get("service", "")
+    if step.tool in ("query_logs", "query_deployments"):
+        return step.tool, service
+    if step.tool == "query_metrics":
+        return step.tool, service, step.parameters.get("metric", "")
+    return _step_key(step)
+
+
+def _confidence_score(confidence: ConfidenceLevel) -> int:
+    return {ConfidenceLevel.HIGH: 3, ConfidenceLevel.MEDIUM: 2, ConfidenceLevel.LOW: 1}.get(confidence, 0)
+
+
+def _is_db_pool_exhaustion_log(message: str) -> bool:
+    message = message.lower()
+    if any(noise in message for noise in ("hikaripool-1 - start completed", "start completed")):
+        return False
+    if any(non_db in message for non_db in ("redis", "http", "thread", "request queued", "rejected")):
+        return False
+    exhaustion_terms = (
+        "connection pool exhausted",
+        "pool exhausted",
+        "connection pool full",
+        "pool full",
+        "timeout waiting for connection",
+        "connection is not available",
+        "too many connections",
+        "unable to acquire jdbc connection",
+        "could not acquire jdbc connection",
+    )
+    return any(term in message for term in exhaustion_terms)
+
+
+def _merge_hypotheses(hypotheses: list[Hypothesis]) -> list[Hypothesis]:
+    """Merge duplicate cause codes and rank evidence-backed hypotheses first."""
+    merged: dict[str, Hypothesis] = {}
+
+    for hypothesis in hypotheses:
+        existing = merged.get(hypothesis.cause_code)
+        if existing is None:
+            merged[hypothesis.cause_code] = Hypothesis(
+                cause_code=hypothesis.cause_code,
+                confidence=hypothesis.confidence,
+                supporting_evidence=list(dict.fromkeys(hypothesis.supporting_evidence)),
+                contradicting_evidence=list(dict.fromkeys(hypothesis.contradicting_evidence)),
+                reasoning_summary=hypothesis.reasoning_summary,
+            )
+            continue
+
+        if _confidence_score(hypothesis.confidence) > _confidence_score(existing.confidence):
+            existing.confidence = hypothesis.confidence
+            existing.reasoning_summary = hypothesis.reasoning_summary or existing.reasoning_summary
+        elif hypothesis.reasoning_summary and hypothesis.reasoning_summary not in existing.reasoning_summary:
+            existing.reasoning_summary = (
+                f"{existing.reasoning_summary}; {hypothesis.reasoning_summary}"
+                if existing.reasoning_summary else hypothesis.reasoning_summary
+            )
+
+        for evidence_id in hypothesis.supporting_evidence:
+            if evidence_id not in existing.supporting_evidence:
+                existing.supporting_evidence.append(evidence_id)
+        for evidence_id in hypothesis.contradicting_evidence:
+            if evidence_id not in existing.contradicting_evidence:
+                existing.contradicting_evidence.append(evidence_id)
+
+    ranked = sorted(
+        merged.values(),
+        key=lambda h: (
+            -_confidence_score(h.confidence),
+            0 if h.supporting_evidence else 1,
+            h.cause_code == "UNKNOWN",
+        ),
+    )
+    return ranked[:3]
+
+
+def _remove_metric_contradicted_hypotheses(
+    hypotheses: list[Hypothesis],
+    evidence: list[Evidence],
+) -> list[Hypothesis]:
+    pool_metrics = [
+        item for item in evidence
+        if item.source == "query_metrics"
+        and item.content.get("metric") == "db_pool_active_ratio"
+        and item.content.get("current") is not None
+    ]
+    pool_is_low = any(float(item.content.get("current", 0)) < 0.7 for item in pool_metrics)
+    if not pool_is_low:
+        return hypotheses
+    return [
+        hypothesis for hypothesis in hypotheses
+        if hypothesis.cause_code != "DATABASE_CONNECTION_POOL_EXHAUSTED"
+    ]
+
+
+def _merge_actions(primary: list[str], secondary: list[str], hypotheses: list[Hypothesis]) -> list[str]:
+    actions = []
+    seen = set()
+    cause_codes = {hypothesis.cause_code for hypothesis in hypotheses}
+    for action in primary + secondary:
+        if not action or action in seen:
+            continue
+        action_text = action.lower()
+        if (
+            "DATABASE_CONNECTION_POOL_EXHAUSTED" not in cause_codes
+            and ("connection pool" in action_text or "hikaricp" in action_text)
+        ):
+            continue
+        category = _action_category(action_text)
+        if category and category in seen:
+            continue
+        actions.append(action)
+        seen.add(action)
+        if category:
+            seen.add(category)
+        if len(actions) >= 3:
+            break
+    return actions or ["Gather more evidence"]
+
+
+def _action_category(action_text: str) -> str:
+    if "connection pool" in action_text or "hikaricp" in action_text:
+        return "connection_pool"
+    if "index" in action_text or "explain" in action_text:
+        return "database_index"
+    if "n+1" in action_text or "rewrite" in action_text:
+        return "query_optimization"
+    if "execution plan" in action_text or "optimize" in action_text or "slow-running sql" in action_text:
+        return "database_plan"
+    if "monitor" in action_text or "alert" in action_text:
+        return "monitoring"
+    return ""
+
+
 def _rule_based_actions(hypotheses: list[Hypothesis]) -> list[str]:
     """Generate rule-based actions when LLM fails."""
     action_map = {
-        "DATABASE_SLOW_QUERY": ["Check for missing indexes", "Optimize slow queries"],
-        "DATABASE_CONNECTION_POOL_EXHAUSTED": ["Increase pool size", "Check for connection leaks"],
+        "DATABASE_SLOW_QUERY": [
+            "Check for missing database indexes (EXPLAIN ANALYZE on slow queries)",
+            "Review query execution plans and optimize N+1 queries",
+        ],
+        "DATABASE_CONNECTION_POOL_EXHAUSTED": [
+            "Increase HikariCP maximum pool size",
+            "Check for connection leaks (long-running transactions)",
+            "Review slow queries holding connections",
+        ],
         "REDIS_TIMEOUT": ["Check Redis health", "Review slow commands"],
         "DOWNSTREAM_SERVICE_FAILURE": ["Check downstream health", "Verify circuit breaker"],
         "RECENT_DEPLOYMENT_REGRESSION": ["Review deployment changes", "Consider rollback"],

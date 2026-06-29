@@ -12,16 +12,15 @@ Features:
 
 import asyncio
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from app.agent.graph import DiagnosisAgent
 from app.agent.service import parse_incident
 from app.domain.incident import Incident
-from app.infrastructure.checkpointer import InMemoryCheckpointer, RedisCheckpointer, get_nodes_to_resume
+from app.infrastructure.checkpointer import InMemoryCheckpointer, RedisCheckpointer
 from app.infrastructure.sse_manager import DiagnosisEvent, EventType, sse_manager
-from app.infrastructure.task_queue import InMemoryTaskQueue, TaskMessage, TaskQueue, TaskStatus
-from app.infrastructure.tool_executor import ToolExecutor
+from app.infrastructure.task_queue import InMemoryTaskQueue, TaskMessage, TaskQueue
 
 
 class DiagnosisWorker:
@@ -81,7 +80,7 @@ class DiagnosisWorker:
             # Check deadline
             if task_msg.deadline_at:
                 deadline = datetime.fromisoformat(task_msg.deadline_at)
-                if datetime.utcnow() > deadline:
+                if datetime.now(UTC) > deadline:
                     self._queue.fail(task_msg.task_id, "Deadline exceeded", msg_id)
                     return
 
@@ -182,6 +181,17 @@ class DiagnosisWorker:
             "missing_evidence": report.missing_evidence,
             "tool_failures": report.tool_failures,
             "evidence_ids": report.evidence_ids,
+            "evidence_details": [
+                {
+                    "evidence_id": e.evidence_id,
+                    "source": e.source,
+                    "summary": e.summary,
+                    "query_window": e.query_window,
+                    "truncated": e.truncated,
+                    "content": e.content,
+                }
+                for e in report.evidence_details
+            ],
             "total_tool_calls": report.total_tool_calls,
         }
 

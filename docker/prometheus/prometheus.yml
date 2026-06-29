@@ -6,14 +6,14 @@ scrape_configs:
   - job_name: 'order-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:9081']
+      - targets: ['192.168.85.1:9081']
 
   - job_name: 'inventory-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:9082']
+      - targets: ['192.168.85.1:9082']
 
   - job_name: 'payment-mock-service'
     metrics_path: '/actuator/prometheus'
     static_configs:
-      - targets: ['host.docker.internal:9083']
+      - targets: ['192.168.85.1:9083']

@@ -1,21 +1,21 @@
-"""Runbook store - versioned runbook storage with lifecycle management
+"""Runbook store - versioned runbook storage with lifecycle management.
 
 Runbook metadata:
   runbook_id, service, component
   applicable_version, effective_from, effective_to
   owner, source_commit, content_hash, last_verified_at
-  status: valid, deprecated, pending_verification
+  status: valid, deprecated, pending_verification, expired
 
 Governance rules:
-  - 服务升级后，相关Runbook自动标记待验证
-  - 内容哈希变化后生成新版本
-  - 旧版本保留用于历史审计，运行时默认过滤
-  - 超过验证时限的文档降低排序或禁止作为高置信度依据
+  - Mark related runbooks as pending verification after service upgrades.
+  - Create a new version when the content hash changes.
+  - Keep deprecated versions for audit history.
+  - Lower trust for stale runbooks until they are re-verified.
 """
 
 import hashlib
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Optional
 
@@ -43,7 +43,7 @@ class Runbook:
     content_hash: str = ""
     # Lifecycle
     status: RunbookStatus = RunbookStatus.VALID
-    effective_from: datetime = field(default_factory=datetime.utcnow)
+    effective_from: datetime = field(default_factory=lambda: datetime.now(UTC))
     effective_to: Optional[datetime] = None
     last_verified_at: Optional[datetime] = None
     owner: str = ""
@@ -52,7 +52,7 @@ class Runbook:
 
     def is_expired(self, now: datetime | None = None) -> bool:
         """Check if runbook has expired"""
-        now = now or datetime.utcnow()
+        now = now or datetime.now(UTC)
         if self.effective_to and now > self.effective_to:
             return True
         return False
@@ -61,7 +61,7 @@ class Runbook:
         """Check if runbook needs re-verification"""
         if self.last_verified_at is None:
             return True
-        age = datetime.utcnow() - self.last_verified_at
+        age = datetime.now(UTC) - self.last_verified_at
         return age.days > max_age_days
 
     def is_usable_as_evidence(self) -> bool:
@@ -100,7 +100,7 @@ class RunbookStore:
 
             # Mark old version as deprecated
             latest.status = RunbookStatus.DEPRECATED
-            latest.effective_to = datetime.utcnow()
+            latest.effective_to = datetime.now(UTC)
 
         versions.append(runbook)
         return runbook
@@ -120,7 +120,7 @@ class RunbookStore:
     def get_active(self, runbook_id: str) -> Runbook | None:
         """Get the currently active (valid, non-expired) version"""
         versions = self._runbooks.get(runbook_id, [])
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         for v in reversed(versions):
             if v.status == RunbookStatus.VALID and not v.is_expired(now):
                 return v
@@ -129,7 +129,7 @@ class RunbookStore:
     def list_active(self, service: str | None = None) -> list[Runbook]:
         """List all active runbooks, optionally filtered by service"""
         result = []
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         for versions in self._runbooks.values():
             for v in reversed(versions):
                 if v.status == RunbookStatus.VALID and not v.is_expired(now):
@@ -157,7 +157,7 @@ class RunbookStore:
         rb = self.get(runbook_id, version)
         if rb:
             rb.status = RunbookStatus.VALID
-            rb.last_verified_at = datetime.utcnow()
+            rb.last_verified_at = datetime.now(UTC)
 
     def get_all_versions(self, runbook_id: str) -> list[Runbook]:
         """Get all versions of a runbook (for audit trail)"""
@@ -180,7 +180,7 @@ def create_sample_runbooks() -> RunbookStore:
             confidence_note="Verified in production incident INC-0892",
             version="1.0",
             owner="sre-team",
-            last_verified_at=datetime.utcnow() - timedelta(days=10),
+            last_verified_at=datetime.now(UTC) - timedelta(days=10),
             tags=["database", "mysql", "slow-query", "index"],
         ),
         Runbook(
@@ -194,7 +194,7 @@ def create_sample_runbooks() -> RunbookStore:
             confidence_note="Based on incident INC-0756",
             version="1.0",
             owner="sre-team",
-            last_verified_at=datetime.utcnow() - timedelta(days=30),
+            last_verified_at=datetime.now(UTC) - timedelta(days=30),
             tags=["redis", "timeout", "connection-pool"],
         ),
         Runbook(
@@ -208,7 +208,7 @@ def create_sample_runbooks() -> RunbookStore:
             confidence_note="Standard procedure",
             version="1.0",
             owner="sre-team",
-            last_verified_at=datetime.utcnow() - timedelta(days=5),
+            last_verified_at=datetime.now(UTC) - timedelta(days=5),
             tags=["downstream", "503", "circuit-breaker"],
         ),
         Runbook(
@@ -222,7 +222,7 @@ def create_sample_runbooks() -> RunbookStore:
             confidence_note="Common pattern in high-traffic scenarios",
             version="1.0",
             owner="sre-team",
-            last_verified_at=datetime.utcnow() - timedelta(days=15),
+            last_verified_at=datetime.now(UTC) - timedelta(days=15),
             tags=["database", "connection-pool", "hikari", "leak"],
         ),
         Runbook(
@@ -236,7 +236,7 @@ def create_sample_runbooks() -> RunbookStore:
             confidence_note="Monitor jvm_threads_active metric",
             version="1.0",
             owner="sre-team",
-            last_verified_at=datetime.utcnow() - timedelta(days=20),
+            last_verified_at=datetime.now(UTC) - timedelta(days=20),
             tags=["jvm", "thread-pool", "saturation"],
         ),
     ]

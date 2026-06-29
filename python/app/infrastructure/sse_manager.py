@@ -16,9 +16,9 @@ Events pushed:
 import asyncio
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
 
 class EventType(Enum):
@@ -44,7 +44,7 @@ class DiagnosisEvent:
 
     def __post_init__(self):
         if not self.timestamp:
-            self.timestamp = datetime.utcnow().isoformat()
+            self.timestamp = datetime.now(UTC).isoformat()
 
     def to_sse(self) -> str:
         """Format as SSE data"""

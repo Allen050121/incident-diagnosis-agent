@@ -1,118 +1,203 @@
-# 微服务故障诊断 Agent | Log, Metrics & Runbook Evidence-Driven RCA
+# Incident Diagnosis Agent | Log, Metrics & Runbook Evidence-Driven RCA
 
-面向 Spring Boot 微服务的研发故障诊断 Agent,能够根据告警自动调用受控工具收集证据,输出 Top-3 根因候选、证据和下一步处置建议。
+AI-powered incident diagnosis agent for Spring Boot microservices. Automatically collects evidence from logs, metrics, deployments, and runbooks, then uses LLM (DeepSeek V4 Flash) to identify root causes with traceable evidence.
 
-## 项目定位
+## Architecture
 
-当线上接口出现超时、错误率升高或消息积压时,Agent 可以:
-- 自动查询日志、指标和最近变更
-- 检索相关 Runbook/历史案例
-- 形成根因假设并验证关键假设
-- 输出可追溯证据的诊断报告
+```
+┌─────────────────────────────────────────────────────┐
+│                   incident-platform                  │
+│              (Alert & Task Management)               │
+│                   Port: 9084                         │
+├──────────┬──────────┬───────────────┬───────────────┤
+│  order-  │inventory-│   payment-    │               │
+│  service │ service  │ mock-service  │               │
+│  :9081   │  :9082   │   :9083       │               │
+└──────────┴──────────┴───────────────┴───────────────┘
+         │              │               │
+         ▼              ▼               ▼
+┌─────────────────────────────────────────────────────┐
+│              Python Diagnosis Agent                   │
+│         FastAPI + LangGraph + DeepSeek V4 Flash       │
+│                   Port: 8000                          │
+│                                                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │
+│  │ LLM Plan │→ │ Evidence │→ │ LLM Hypotheses   │   │
+│  │ Creation │  │ Collect  │  │ + Report Gen     │   │
+│  └──────────┘  └──────────┘  └──────────────────┘   │
+│        ↕              ↕               ↕              │
+│  [Rule-Based Fallback when LLM unavailable]          │
+└─────────────────────────────────────────────────────┘
+         │              │               │
+    ┌────┴───┐   ┌─────┴────┐   ┌─────┴──────┐
+    │ MySQL  │   │  Redis   │   │Elasticsearch│
+    │  :3306 │   │  :6379   │   │  :9200      │
+    └────────┘   └──────────┘   └─────────────┘
+```
 
-## 技术栈
+## Tech Stack
 
-**Java 后端:**
-- Java 21 + Spring Boot 3
-- Micrometer + Actuator
-- MySQL 8 + Redis
-- Resilience4j
+| Layer | Technology |
+|---|---|
+| Java Backend | Java 21 + Spring Boot 3.2 + Micrometer |
+| Python Agent | Python 3.12 + FastAPI + Pydantic v2 |
+| LLM | DeepSeek V4 Flash (OpenAI-compatible API) |
+| Database | MySQL 8 |
+| Cache / Queue | Redis (config + task queue + SSE) |
+| Search / RAG | Elasticsearch (Runbook BM25 search) |
+| Monitoring | Prometheus + Grafana + Loki |
+| Deployment | Docker Compose |
 
-**Python Agent:**
-- Python 3.12
-- FastAPI + LangGraph
-- Pydantic v2
-- Elasticsearch/Loki + Prometheus
-
-**基础设施:**
-- Docker Compose
-- GitHub Actions
-
-## 项目结构
+## Project Structure
 
 ```text
 .
-├── java/                          # Java 模块
-│   ├── order-service/            # 订单入口服务
-│   ├── inventory-service/        # 库存服务
-│   ├── payment-mock-service/     # 支付模拟服务
-│   └── incident-platform/        # 诊断平台(告警、任务管理)
-├── python/                        # Python Agent
-│   └── app/
-│       ├── api/                  # HTTP API
-│       ├── agent/                # LangGraph 工作流
-│       ├── domain/               # 领域模型
-│       ├── infrastructure/       # 工具、LLM、检索
-│       └── tests/                # 测试
-├── docker/                        # Docker Compose 配置
-├── scripts/                       # 故障注入、评测脚本
-└── docs/                          # 设计文档
+├── java/                          # 4 Spring Boot microservices
+│   ├── order-service/             # Order entry service (:9081)
+│   ├── inventory-service/         # Inventory service (:9082)
+│   ├── payment-mock-service/      # Payment mock (:9083)
+│   └── incident-platform/         # Diagnosis platform (:9084)
+├── python/                        # Python FastAPI Agent
+│   ├── .env.example               # Config template (copy to .env)
+│   ├── app/
+│   │   ├── agent/                 # Diagnosis pipeline
+│   │   │   ├── graph.py           # Rule-based agent
+│   │   │   ├── llm_graph.py       # LLM-powered agent
+│   │   │   └── service.py         # Factory functions
+│   │   ├── infrastructure/
+│   │   │   ├── llm/               # DeepSeek LLM client
+│   │   │   ├── tool_*.py          # Tool definitions & executor
+│   │   │   └── evidence_*.py      # Evidence governance
+│   │   ├── evaluation/            # LLM vs rule-based comparison
+│   │   ├── domain/                # Incident, Evidence, Hypothesis models
+│   │   └── tests/                 # 71 tests (all phases)
+│   └── requirements.txt
+├── docker/                        # Infrastructure configs
+├── scripts/                       # Fault injection & eval scripts
+└── docs/                          # Documentation
+    ├── agent-state-diagram.md     # Pipeline state machine
+    ├── fault-inventory.md         # 12 fault scenarios
+    └── evaluation-report.md       # LLM vs rule-based analysis
 ```
 
-## 快速开始
+## Quick Start
 
-### 前置条件
+### Prerequisites
 
 - Docker & Docker Compose v2
-- JDK 21
-- Python 3.12
+- JDK 21 + Maven
+- Python 3.12 + Conda
 
-### 启动环境
-
-```bash
-# 启动基础设施
-docker-compose up -d mysql redis loki prometheus
-
-# 启动 Java 服务
-cd java/incident-platform && ./mvnw spring-boot:run
-
-# 启动 Python Agent
-cd python && pip install -r requirements.txt && uvicorn app.main:app --reload
-```
-
-### 运行故障注入测试
+### 1. Start Infrastructure
 
 ```bash
-./scripts/run-fault-injection.sh
+docker-compose up -d mysql redis loki prometheus elasticsearch
 ```
 
-## 核心功能
+### 2. Start Java Services
 
-- **告警解析**: 将告警转换为结构化诊断任务
-- **受控调查工具**: query_logs, query_metrics, query_deployments, search_runbooks
-- **调查计划**: 根据告警类型选择 2-4 个调查步骤
-- **根因假设与验证**: 形成最多三个候选假设并验证
-- **诊断报告**: 输出 Top-3 根因、证据和建议
+```bash
+cd java
+mvn clean install
+cd incident-platform && mvn spring-boot:run &
+cd ../order-service && mvn spring-boot:run &
+cd ../inventory-service && mvn spring-boot:run &
+cd ../payment-mock-service && mvn spring-boot:run &
+```
 
-## 故障场景
+### 3. Start Python Agent
 
-首期支持 12 类确定性故障:
-1. MySQL 慢 SQL
-2. MySQL 连接池耗尽
-3. Redis 请求超时
-4. Redis 热 Key
-5. 下游支付接口超时
-6. 下游支付接口返回 5xx
-7. HTTP 连接池耗尽
-8. 线程池队列满
-9. 配置错误
-10. 发布后空指针异常
-11. 限流或熔断触发
-12. RocketMQ 消费积压
+```bash
+cd python
+cp .env.example .env     # Edit .env with your API key
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
 
-## 评测指标
+### 4. Run Diagnosis
 
-- Root Cause Top-1 Accuracy
-- Root Cause Top-3 Recall
-- Evidence Precision
-- Tool Selection Accuracy
-- 平均诊断耗时和 Token 成本
+```bash
+curl -X POST http://localhost:8000/api/v1/diagnose \
+  -H "Content-Type: application/json" \
+  -d '{
+    "incident_id": "INC-001",
+    "service": "order-service",
+    "alert_type": "P95_LATENCY_HIGH",
+    "value": 5000,
+    "threshold": 1000,
+    "started_at": "2026-06-29T10:00:00"
+  }'
+```
 
-## 开发阶段
+### 5. Inject Faults
 
-当前处于 **阶段 0: 故障与评测定义**
+```bash
+# Activate MySQL slow query
+curl -X POST http://localhost:9081/internal/v1/faults/mysql-slow-query/activate \
+  -H "Content-Type: application/json" \
+  -d '{"delay_ms": 1800}'
 
-详见 [开发文档](02-研发故障诊断Agent-MVP产品与开发文档.md)
+# Reset
+curl -X POST http://localhost:9081/internal/v1/faults/mysql-slow-query/reset
+```
+
+## Features
+
+### Phase 1-2: Fault Injection & Observability
+- 12 deterministic fault scenarios across 3 services
+- Log/Metrics/Deployment/Topology query APIs
+
+### Phase 3: Agent Diagnosis Pipeline
+- 4 investigation tools: `query_logs`, `query_metrics`, `query_deployments`, `search_runbooks`
+- Rule-based hypothesis generation with evidence tracking
+- Top-3 root cause identification
+
+### Phase 4: Evidence Governance & RAG
+- Log deduplication, normalization, and trimming
+- Runbook versioning and BM25 search
+- Evidence traceability validation
+
+### Phase 5: Async Tasks & Recovery
+- Redis Streams task queue with claim/timeout pattern
+- Checkpointer for crash recovery
+- SSE real-time event streaming
+- Task cancellation and deadline enforcement
+
+### Phase 6: LLM Integration
+- DeepSeek V4 Flash for plan/hypothesis/report generation
+- Reasoning model support (content + reasoning_content)
+- Token usage and cost tracking
+- Auto-fallback to rule-based when LLM unavailable
+- Evaluation module for LLM vs rule-based comparison
+
+## Testing
+
+```bash
+cd python
+pytest app/tests/ -v
+# 71 tests across all phases
+```
+
+## Configuration
+
+Copy `python/.env.example` to `python/.env` and configure:
+
+| Variable | Description |
+|---|---|
+| `LLM_API_KEY` | DeepSeek API key (get from platform.deepseek.com) |
+| `LLM_MODEL` | Model name (default: `deepseek-v4-flash`) |
+| `LLM_BASE_URL` | API base URL (default: `https://api.deepseek.com`) |
+| `DB_HOST` | MySQL host |
+| `REDIS_HOST` | Redis host |
+| `PLATFORM_URL` | incident-platform URL |
+
+**Important:** Never commit `.env` to git. Only `.env.example` with placeholder values is tracked.
+
+## Documentation
+
+- [Agent State Diagram](docs/agent-state-diagram.md) - Pipeline visualization
+- [Fault Inventory](docs/fault-inventory.md) - 12 fault scenarios
+- [Evaluation Report](docs/evaluation-report.md) - LLM vs rule-based analysis
 
 ## License
 

@@ -145,6 +145,30 @@
                       "updated_at":  "2026-06-29T11:45:00.0000000+08:00",
                       "business":  "Integrate DeepSeek V4 Flash LLM into diagnosis agent with evaluation.",
                       "task_card":  ".ai-team/tasks/phase6-llm-integration.md"
+                  },
+                  {
+                      "task_id":  "phase7-demo-deliverables",
+                      "title":  "阶段7：演示与最终交付物",
+                      "status":  "in_progress",
+                      "task_type":  "implementation",
+                      "delivery_stage":  "release",
+                      "mode":  "serial",
+                      "work_mode":  "MVP",
+                      "workflow_mode":  "standard",
+                      "branch":  "",
+                      "github_issue":  "",
+                      "github_pr":  "",
+                      "ci_status":  "",
+                      "dependencies":  [
+                                          "phase6-llm-integration"
+                                      ],
+                      "last_run_id":  "",
+                      "last_result":  "",
+                      "blocked_reason":  "",
+                      "verification_status":  "not_run",
+                      "updated_at":  "2026-06-29T12:00:00.0000000+08:00",
+                      "business":  "Demo scenarios, evaluation report, state diagram, fault inventory, README.",
+                      "task_card":  ".ai-team/tasks/phase7-demo-deliverables.md"
                   }
               ]
 }

@@ -28,6 +28,11 @@ from app.domain.incident import (
 )
 from app.infrastructure.tool_definitions import ToolInput
 from app.infrastructure.tool_executor import ToolExecutor
+from app.infrastructure.evidence_governance import (
+    filter_hypotheses_without_evidence,
+    validate_evidence_traceability,
+    determine_diagnosis_status,
+)
 
 
 @dataclass
@@ -344,7 +349,7 @@ class DiagnosisAgent:
         return state
 
     async def _validate_evidence(self, state: AgentState) -> AgentState:
-        """Validate that all claims in hypotheses reference real evidence"""
+        """Validate that all claims in hypotheses reference real evidence (evidence governance)"""
         all_evidence_ids = {e.evidence_id for e in state.evidence}
 
         for h in state.hypotheses:
@@ -356,10 +361,13 @@ class DiagnosisAgent:
                 eid for eid in h.contradicting_evidence if eid in all_evidence_ids
             ]
 
+        # Filter and re-rank: hypotheses without evidence go to the end
+        state.hypotheses = filter_hypotheses_without_evidence(state.hypotheses)
+
         return state
 
     async def _generate_report(self, state: AgentState) -> AgentState:
-        """Generate the final diagnosis report"""
+        """Generate the final diagnosis report with evidence governance"""
         if not state.incident:
             state.final_report = DiagnosisReport(
                 incident_id="unknown",
@@ -368,16 +376,11 @@ class DiagnosisAgent:
             )
             return state
 
-        # Determine status
-        has_evidence = any(h.supporting_evidence for h in state.hypotheses)
-        top_hypothesis = state.hypotheses[0] if state.hypotheses else None
+        # Evidence traceability check
+        traceability = validate_evidence_traceability(state.hypotheses, state.evidence)
 
-        if has_evidence and top_hypothesis and top_hypothesis.confidence in (
-            ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM
-        ):
-            status = "DIAGNOSED"
-        else:
-            status = "INCONCLUSIVE"
+        # Determine status using governance rules
+        status = determine_diagnosis_status(state.hypotheses, traceability)
 
         # Generate recommended actions based on top cause
         actions = _generate_actions(state.hypotheses)

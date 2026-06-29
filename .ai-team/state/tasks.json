@@ -73,6 +73,30 @@
                       "updated_at":  "2026-06-29T10:15:00.0000000+08:00",
                       "business":  "Implement minimal Agent diagnosis pipeline with 4 tools and 15 seed tests.",
                       "task_card":  ".ai-team/tasks/phase3-agent-diagnosis.md"
+                  },
+                  {
+                      "task_id":  "phase4-evidence-rag",
+                      "title":  "阶段4：证据治理与RAG",
+                      "status":  "completed",
+                      "task_type":  "implementation",
+                      "delivery_stage":  "build",
+                      "mode":  "serial",
+                      "work_mode":  "MVP",
+                      "workflow_mode":  "standard",
+                      "branch":  "",
+                      "github_issue":  "",
+                      "github_pr":  "",
+                      "ci_status":  "",
+                      "dependencies":  [
+                                          "phase3-agent-diagnosis"
+                                      ],
+                      "last_run_id":  "phase4-evidence-rag-executor-20260629110000",
+                      "last_result":  "passed",
+                      "blocked_reason":  "",
+                      "verification_status":  "passed",
+                      "updated_at":  "2026-06-29T11:00:00.0000000+08:00",
+                      "business":  "Evidence governance: log dedup, runbook versioning, BM25 search, traceability.",
+                      "task_card":  ".ai-team/tasks/phase4-evidence-rag.md"
                   }
               ]
 }

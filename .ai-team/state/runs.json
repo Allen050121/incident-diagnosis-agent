@@ -1,6 +1,6 @@
 {
     "version":  1,
-    "updatedAt":  "2026-06-29T10:15:00.0000000+08:00",
+    "updatedAt":  "2026-06-29T11:00:00.0000000+08:00",
     "runs":  [
                  {
                      "run_id":  "phase1-fault-target-executor-20260625170303",
@@ -60,6 +60,34 @@
                                          "Diagnosis API returns DIAGNOSED status",
                                          "Evidence IDs tracked and referenced",
                                          "Hypotheses have supporting/contradicting evidence"
+                                     ],
+                     "human_decisions":  [],
+                     "blocked_reason":  "",
+                     "followups":  []
+                 },
+                 {
+                     "run_id":  "phase4-evidence-rag-executor-20260629110000",
+                     "task_id":  "phase4-evidence-rag",
+                     "role":  "executor",
+                     "status":  "passed",
+                     "started_at":  "2026-06-29T11:00:00.0000000+08:00",
+                     "finished_at":  "2026-06-29T11:00:00.0000000+08:00",
+                     "changed_files":  [
+                                         "python/app/infrastructure/log_processor.py",
+                                         "python/app/infrastructure/runbook_store.py",
+                                         "python/app/infrastructure/runbook_search.py",
+                                         "python/app/infrastructure/runbook_provider.py",
+                                         "python/app/infrastructure/evidence_governance.py",
+                                         "python/app/agent/graph.py",
+                                         "python/app/tests/test_phase4.py"
+                                     ],
+                     "verification":  [
+                                         "30/30 tests passed (pytest, 1.24s)",
+                                         "Diagnosis API evidence traceability verified",
+                                         "Log dedup/trim/filter tested",
+                                         "Runbook versioning and lifecycle tested",
+                                         "BM25 search and MRR evaluation tested",
+                                         "No-evidence conclusion rejection tested"
                                      ],
                      "human_decisions":  [],
                      "blocked_reason":  "",

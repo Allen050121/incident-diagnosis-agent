@@ -18,10 +18,10 @@ class Settings(BaseSettings):
     elasticsearch_url: str = "http://localhost:9200"
     runbook_index: str = "runbooks"
 
-    # LLM (placeholder - configure based on your provider)
+    # LLM (DeepSeek - configure via .env, never commit real keys)
     llm_api_key: str = ""
-    llm_model: str = "gpt-4"
-    llm_base_url: str = ""
+    llm_model: str = "deepseek-chat"
+    llm_base_url: str = "https://api.deepseek.com"
 
     # Budget limits
     max_tool_calls: int = 10

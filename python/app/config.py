@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     redis_db: int = 0
 
     # Java Platform
-    platform_url: str = "http://localhost:8080"
+    platform_url: str = "http://localhost:9084"
 
     # Elasticsearch (Runbook RAG)
     elasticsearch_url: str = "http://localhost:9200"

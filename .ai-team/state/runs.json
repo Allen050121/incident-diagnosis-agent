@@ -1,0 +1,69 @@
+{
+    "version":  1,
+    "updatedAt":  "2026-06-29T10:15:00.0000000+08:00",
+    "runs":  [
+                 {
+                     "run_id":  "phase1-fault-target-executor-20260625170303",
+                     "task_id":  "phase1-fault-target",
+                     "role":  "executor",
+                     "status":  "passed",
+                     "started_at":  "2026-06-25T17:03:03.6438984+08:00",
+                     "finished_at":  "2026-06-25T17:03:03.6438984+08:00",
+                     "changed_files":  [],
+                     "verification":  [
+                                          "All 4 services health checks passed",
+                                          "Fault injection verified",
+                                          "Prometheus metrics confirmed"
+                                      ],
+                     "human_decisions":  [],
+                     "blocked_reason":  "",
+                     "followups":  []
+                 },
+                 {
+                     "run_id":  "phase2-observability-api-executor-20260625173410",
+                     "task_id":  "phase2-observability-api",
+                     "role":  "executor",
+                     "status":  "passed",
+                     "started_at":  "2026-06-25T17:34:10.3718827+08:00",
+                     "finished_at":  "2026-06-25T17:34:10.3718827+08:00",
+                     "changed_files":  [],
+                     "verification":  [
+                                          "Log query API tested",
+                                          "Metrics query API tested",
+                                          "Deployment query API tested",
+                                          "Topology API tested"
+                                      ],
+                     "human_decisions":  [],
+                     "blocked_reason":  "",
+                     "followups":  []
+                 },
+                 {
+                     "run_id":  "phase3-agent-diagnosis-executor-20260629101500",
+                     "task_id":  "phase3-agent-diagnosis",
+                     "role":  "executor",
+                     "status":  "passed",
+                     "started_at":  "2026-06-29T10:15:00.0000000+08:00",
+                     "finished_at":  "2026-06-29T10:15:00.0000000+08:00",
+                     "changed_files":  [
+                                         "python/app/domain/incident.py",
+                                         "python/app/infrastructure/tool_definitions.py",
+                                         "python/app/infrastructure/tool_executor.py",
+                                         "python/app/infrastructure/fake_tools.py",
+                                         "python/app/infrastructure/tool_providers.py",
+                                         "python/app/agent/graph.py",
+                                         "python/app/agent/service.py",
+                                         "python/app/api/router.py",
+                                         "python/app/tests/test_seed.py"
+                                     ],
+                     "verification":  [
+                                         "15 seed tests passed (pytest)",
+                                         "Diagnosis API returns DIAGNOSED status",
+                                         "Evidence IDs tracked and referenced",
+                                         "Hypotheses have supporting/contradicting evidence"
+                                     ],
+                     "human_decisions":  [],
+                     "blocked_reason":  "",
+                     "followups":  []
+                 }
+             ]
+}

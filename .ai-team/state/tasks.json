@@ -1,11 +1,78 @@
-{
-  "version": 1,
-  "tasks": [],
-  "updatedAt": null,
-  "notes": [
-    "This file is tool-readable task state.",
-    "Markdown task cards remain the human-readable source of task details.",
-    "Run .ai-team/scripts/Sync-AiTeamState.ps1 after creating or updating task cards.",
-    "Keep execution evidence in .ai-team/state/runs.json instead of chat history."
-  ]
+﻿{
+    "version":  1,
+    "updatedAt":  "2026-06-29T09:47:39.1779550+08:00",
+    "tasks":  [
+                  {
+                      "task_id":  "phase1-fault-target",
+                      "title":  "阶段1：最小故障靶场",
+                      "status":  "planned",
+                      "task_type":  "implementation",
+                      "delivery_stage":  "build",
+                      "mode":  "serial",
+                      "work_mode":  "MVP",
+                      "workflow_mode":  "standard",
+                      "branch":  "",
+                      "github_issue":  "",
+                      "github_pr":  "",
+                      "ci_status":  "",
+                      "dependencies":  [
+
+                                       ],
+                      "last_run_id":  "phase1-fault-target-executor-20260625170303",
+                      "last_result":  "passed",
+                      "blocked_reason":  "",
+                      "verification_status":  "passed",
+                      "updated_at":  "2026-06-29T09:47:39.1729485+08:00",
+                      "business":  "Describe the user-visible result this task must deliver.",
+                      "task_card":  ".ai-team/tasks/phase1-fault-target.md"
+                  },
+                  {
+                      "task_id":  "phase2-observability-api",
+                      "title":  "阶段2：观测查询API",
+                      "status":  "planned",
+                      "task_type":  "implementation",
+                      "delivery_stage":  "build",
+                      "mode":  "serial",
+                      "work_mode":  "MVP",
+                      "workflow_mode":  "standard",
+                      "branch":  "",
+                      "github_issue":  "",
+                      "github_pr":  "",
+                      "ci_status":  "",
+                      "dependencies":  [
+
+                                       ],
+                      "last_run_id":  "phase2-observability-api-executor-20260625173410",
+                      "last_result":  "passed",
+                      "blocked_reason":  "",
+                      "verification_status":  "passed",
+                      "updated_at":  "2026-06-29T09:47:39.1779550+08:00",
+                      "business":  "Describe the user-visible result this task must deliver.",
+                      "task_card":  ".ai-team/tasks/phase2-observability-api.md"
+                  },
+                  {
+                      "task_id":  "phase3-agent-diagnosis",
+                      "title":  "阶段3：Agent最小诊断链路",
+                      "status":  "completed",
+                      "task_type":  "implementation",
+                      "delivery_stage":  "build",
+                      "mode":  "serial",
+                      "work_mode":  "MVP",
+                      "workflow_mode":  "standard",
+                      "branch":  "",
+                      "github_issue":  "",
+                      "github_pr":  "",
+                      "ci_status":  "",
+                      "dependencies":  [
+                                          "phase2-observability-api"
+                                      ],
+                      "last_run_id":  "phase3-agent-diagnosis-executor-20260629101500",
+                      "last_result":  "passed",
+                      "blocked_reason":  "",
+                      "verification_status":  "passed",
+                      "updated_at":  "2026-06-29T10:15:00.0000000+08:00",
+                      "business":  "Implement minimal Agent diagnosis pipeline with 4 tools and 15 seed tests.",
+                      "task_card":  ".ai-team/tasks/phase3-agent-diagnosis.md"
+                  }
+              ]
 }
